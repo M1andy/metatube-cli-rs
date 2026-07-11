@@ -29,25 +29,25 @@ pub async fn run_watch(config: &Config) -> anyhow::Result<()> {
                 Ok(evts) => {
                     let _ = tx.send(evts);
                 }
-                Err(e) => error!("watch error: {}", e),
+                Err(e) => error!("⚠ 文件监视出错: {}", e),
             }
         }) {
             Ok(d) => d,
             Err(e) => {
-                error!("failed to create file watcher: {}", e);
+                error!("✗ 无法启动文件监视: {}", e);
                 return;
             }
         };
 
-        if let Err(e) = debouncer
+        if let Err(_e) = debouncer
             .watcher()
             .watch(&watch_dir, notify::RecursiveMode::Recursive)
         {
-            error!("failed to watch {:?}: {}", watch_dir, e);
+            error!("✗ 无法监视文件夹: {}", watch_dir.display());
             return;
         }
 
-        info!("watching {:?} for new video files", watch_dir);
+        info!("→ 正在监视文件夹: {}", watch_dir.display());
 
         // Keep the debouncer alive; its internal thread calls our callback.
         loop {
@@ -55,7 +55,7 @@ pub async fn run_watch(config: &Config) -> anyhow::Result<()> {
         }
     });
 
-    info!("watch mode started, waiting for file events...");
+    info!("→ 等待新视频文件...");
 
     while let Some(events) = rx.recv().await {
         for event in events {
@@ -77,7 +77,7 @@ pub async fn run_watch(config: &Config) -> anyhow::Result<()> {
             let size = match std::fs::metadata(path) {
                 Ok(m) => m.len(),
                 Err(e) => {
-                    warn!("cannot stat {:?}: {}", path, e);
+                    warn!("⚠ 无法读取文件: {} — {}", path.display(), e);
                     continue;
                 }
             };
@@ -99,8 +99,8 @@ pub async fn run_watch(config: &Config) -> anyhow::Result<()> {
             let client = client.clone();
             let jav_output = jav_output.clone();
             tokio::spawn(async move {
-                if let Err(e) = process_one(&client, &jav_output, dry_run, &video).await {
-                    error!("{}: {}", video.filename, e);
+                if let Err(_e) = process_one(&client, &jav_output, dry_run, &video).await {
+                    error!("✗ 文件处理失败: {}", video.filename);
                 }
             });
         }

@@ -13,15 +13,15 @@ pub struct VideoFile {
 pub fn scan(dir: &str, min_size: u64) -> Vec<VideoFile> {
     let mut files = Vec::new();
     scan_recursive(std::path::Path::new(dir), min_size, &mut files);
-    debug!("scanned {} video files", files.len());
+    debug!("→ 扫描完成，共 {} 个视频文件", files.len());
     files
 }
 
 fn scan_recursive(dir: &std::path::Path, min_size: u64, files: &mut Vec<VideoFile>) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
-        Err(e) => {
-            warn!("cannot read directory {:?}: {}", dir, e);
+        Err(_e) => {
+            warn!("⚠ 无法读取目录: {}", dir.display());
             return;
         }
     };

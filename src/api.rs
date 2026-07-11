@@ -3,7 +3,6 @@
 use crate::error::Error;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::Deserialize;
-use std::error::Error as StdError;
 use tracing::{debug, error, instrument};
 
 #[derive(Debug, Deserialize)]
@@ -108,10 +107,7 @@ impl Client {
         let response = match self.request(path).send().await {
             Ok(r) => r,
             Err(e) => {
-                error!("request failed: {:#}", e);
-                if let Some(src) = e.source() {
-                    error!("caused by: {}", src);
-                }
+                error!("⚠ 网络请求失败，请检查网络连接");
                 return Err(e.into());
             }
         };
@@ -135,7 +131,7 @@ impl Client {
     #[instrument(skip(self), fields(keyword = %keyword))]
     pub async fn search_movie(&self, keyword: &str) -> Result<MovieSearchResult, Error> {
         let path = format!("/v1/movies/search?q={}&fallback=true", urlencode(keyword));
-        debug!("searching: {}", path);
+        debug!("→ 搜索影片: {}", keyword);
         let results: Vec<MovieSearchResult> = self.get_data(&path).await?;
         results.into_iter().next().ok_or_else(|| Error::NoResults(keyword.to_string()))
     }
@@ -144,7 +140,7 @@ impl Client {
     #[instrument(skip(self), fields(provider = %provider, id = %id))]
     pub async fn get_movie_info(&self, provider: &str, id: &str) -> Result<MovieInfo, Error> {
         let path = format!("/v1/movies/{}/{}?lazy=false", urlencode(provider), urlencode(id));
-        debug!("fetching: {}", path);
+        // trace only - too verbose for debug
         self.get_data(&path).await
     }
 
@@ -152,7 +148,7 @@ impl Client {
     #[instrument(skip(self), fields(name = %name))]
     pub async fn get_gfriends_actor(&self, name: &str) -> Result<ActorInfo, Error> {
         let path = format!("/v1/actors/gfriends/{}", urlencode(name));
-        debug!("fetching: {}", path);
+        // trace only - too verbose for debug
         self.get_data(&path).await
     }
 }

@@ -125,7 +125,7 @@ impl Config {
         }
         if mode == RunMode::Once && cron_expr.is_some() {
             warn!(
-                "cron expression is set but mode is 'once'; use --mode cron to enable scheduled runs"
+                "⚠ 已设置定时计划，但运行模式为单次。使用 --mode cron 启用定时"
             );
         }
 
@@ -165,7 +165,7 @@ fn parse_mode(s: &str) -> Option<RunMode> {
         "cron" => Some(RunMode::Cron),
         "watch" => Some(RunMode::Watch),
         other => {
-            warn!("unknown mode '{}' in config.toml, expected once/cron/watch", other);
+            warn!("⚠ 未知运行模式: {}，应为 once/cron/watch", other);
             None
         }
     }
@@ -177,7 +177,7 @@ fn load_config_file(custom_path: Option<&Path>) -> Option<ConfigFile> {
         if p.exists() {
             Some(p.to_path_buf())
         } else {
-            warn!("config file not found: {:?}", p);
+            warn!("⚠ 配置文件未找到: {}", p.display());
             return None;
         }
     } else {
@@ -188,12 +188,12 @@ fn load_config_file(custom_path: Option<&Path>) -> Option<ConfigFile> {
         match std::fs::read_to_string(p) {
             Ok(content) => match toml::from_str::<ConfigFile>(&content) {
                 Ok(cf) => {
-                    debug!("loaded config from {:?}", p);
+                    debug!("✓ 已加载配置文件: {}", p.display());
                     return Some(cf);
                 }
-                Err(e) => warn!("failed to parse {:?}: {}", p, e),
+                Err(e) => warn!("⚠ 配置文件格式错误: {} — {}", p.display(), e),
             },
-            Err(e) => warn!("failed to read {:?}: {}", p, e),
+            Err(e) => warn!("⚠ 无法读取配置文件: {} — {}", p.display(), e),
         }
     }
     None
@@ -211,7 +211,7 @@ fn discover_config_path() -> Option<PathBuf> {
 
     for p in &candidates {
         if p.exists() {
-            debug!("found config at {:?}", p);
+            debug!("→ 发现配置文件: {}", p.display());
             return Some(p.clone());
         }
     }
