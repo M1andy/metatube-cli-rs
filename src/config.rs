@@ -217,3 +217,95 @@ fn discover_config_path() -> Option<PathBuf> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_mode_valid() {
+        assert_eq!(parse_mode("once"), Some(RunMode::Once));
+        assert_eq!(parse_mode("cron"), Some(RunMode::Cron));
+        assert_eq!(parse_mode("watch"), Some(RunMode::Watch));
+    }
+
+    #[test]
+    fn test_parse_mode_invalid() {
+        assert_eq!(parse_mode(""), None);
+        assert_eq!(parse_mode("invalid"), None);
+        assert_eq!(parse_mode("ONCE"), None);
+        assert_eq!(parse_mode("Cron"), None);
+    }
+
+    #[test]
+    fn test_min_size_bytes() {
+        let config = Config {
+            mode: RunMode::Once,
+            jav_download: PathBuf::from("/tmp/dl"),
+            jav_output: PathBuf::from("/tmp/out"),
+            server_url: "http://localhost".into(),
+            token: None,
+            proxy: None,
+            min_size_mb: 300,
+            cron_expr: None,
+            concurrency: 4,
+            dry_run: false,
+        };
+        assert_eq!(config.min_size_bytes(), 300 * 1024 * 1024);
+
+        let config2 = Config {
+            min_size_mb: 1,
+            ..config
+        };
+        assert_eq!(config2.min_size_bytes(), 1024 * 1024);
+    }
+
+    #[test]
+    fn test_config_file_deserialize_basic() {
+        let toml_str = r#"
+jav_download = "/tmp/dl"
+jav_output = "/tmp/out"
+server_url = "http://localhost:8080"
+"#;
+        let cf: ConfigFile = toml::from_str(toml_str).unwrap();
+        assert_eq!(cf.jav_download.unwrap(), "/tmp/dl");
+        assert_eq!(cf.jav_output.unwrap(), "/tmp/out");
+        assert_eq!(cf.server_url.unwrap(), "http://localhost:8080");
+        assert!(cf.mode.is_none());
+        assert!(cf.cron.is_none());
+        assert!(cf.token.is_none());
+    }
+
+    #[test]
+    fn test_config_file_deserialize_with_mode_and_cron() {
+        let toml_str = r#"
+mode = "cron"
+cron = "0 */6 * * *"
+jav_download = "/tmp/dl"
+jav_output = "/tmp/out"
+concurrency = 8
+dry_run = true
+min_size_mb = 100
+"#;
+        let cf: ConfigFile = toml::from_str(toml_str).unwrap();
+        assert_eq!(cf.mode.unwrap(), "cron");
+        assert_eq!(cf.cron.unwrap(), "0 */6 * * *");
+        assert_eq!(cf.concurrency.unwrap(), 8);
+        assert_eq!(cf.dry_run.unwrap(), true);
+        assert_eq!(cf.min_size_mb.unwrap(), 100);
+    }
+
+    #[test]
+    fn test_config_file_deserialize_empty_toml() {
+        let cf: ConfigFile = toml::from_str("").unwrap();
+        assert!(cf.mode.is_none());
+        assert!(cf.jav_download.is_none());
+        assert!(cf.cron.is_none());
+    }
+
+    #[test]
+    fn test_load_config_file_nonexistent() {
+        let result = load_config_file(Some(Path::new("/nonexistent/path/config.toml")));
+        assert!(result.is_none());
+    }
+}

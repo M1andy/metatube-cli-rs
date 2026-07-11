@@ -24,3 +24,50 @@ async fn run_once(config: &Config) {
         Err(e) => error!("run failed: {}", e),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_cron_parse_valid() {
+        let schedule = croner::Cron::new("0 */6 * * *").parse();
+        assert!(schedule.is_ok());
+    }
+
+    #[test]
+    fn test_cron_parse_valid_every_minute() {
+        let schedule = croner::Cron::new("* * * * *").parse();
+        assert!(schedule.is_ok());
+    }
+
+    #[test]
+    fn test_cron_parse_valid_daily() {
+        let schedule = croner::Cron::new("0 9 * * *").parse();
+        assert!(schedule.is_ok());
+    }
+
+    #[test]
+    fn test_cron_parse_valid_weekly() {
+        let schedule = croner::Cron::new("0 9 * * 1").parse();
+        assert!(schedule.is_ok());
+    }
+
+    #[test]
+    fn test_cron_parse_invalid() {
+        let schedule = croner::Cron::new("not a cron expression").parse();
+        assert!(schedule.is_err());
+    }
+
+    #[test]
+    fn test_cron_parse_invalid_empty() {
+        let schedule = croner::Cron::new("").parse();
+        assert!(schedule.is_err());
+    }
+
+    #[test]
+    fn test_cron_find_next_occurrence_future() {
+        let schedule = croner::Cron::new("* * * * *").parse().unwrap();
+        let now = chrono::Utc::now();
+        let next = schedule.find_next_occurrence(&now, false).unwrap();
+        assert!(next > now);
+    }
+}

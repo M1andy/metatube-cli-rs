@@ -160,3 +160,162 @@ impl Client {
 fn urlencode(s: &str) -> String {
     s.replace(' ', "%20")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_urlencode() {
+        assert_eq!(urlencode("hello world"), "hello%20world");
+        assert_eq!(urlencode("no_spaces"), "no_spaces");
+        assert_eq!(urlencode(""), "");
+    }
+
+    #[test]
+    fn test_deserialize_movie_search_result_minimal() {
+        let json = r#"{
+            "id": "ssis00123",
+            "number": "SSIS-123",
+            "title": "Test Title",
+            "provider": "fanza",
+            "homepage": "https://example.com"
+        }"#;
+        let result: MovieSearchResult = serde_json::from_str(json).unwrap();
+        assert_eq!(result.id, "ssis00123");
+        assert_eq!(result.number, "SSIS-123");
+        assert_eq!(result.title, "Test Title");
+        assert_eq!(result.provider, "fanza");
+        assert_eq!(result.homepage, "https://example.com");
+        assert!(result.thumb_url.is_none());
+        assert!(result.cover_url.is_none());
+        assert!(result.score.is_none());
+        assert!(result.actors.is_empty());
+        assert!(result.release_date.is_none());
+    }
+
+    #[test]
+    fn test_deserialize_movie_search_result_full() {
+        let json = r#"{
+            "id": "midv005",
+            "number": "MIDV-005",
+            "title": "Another Title",
+            "provider": "fanza",
+            "homepage": "https://example.com/2",
+            "thumb_url": "https://img.example.com/thumb.jpg",
+            "cover_url": "https://img.example.com/cover.jpg",
+            "score": 4.5,
+            "actors": ["actress1", "actress2"],
+            "release_date": "2023-01-15"
+        }"#;
+        let result: MovieSearchResult = serde_json::from_str(json).unwrap();
+        assert_eq!(result.thumb_url.unwrap(), "https://img.example.com/thumb.jpg");
+        assert_eq!(result.cover_url.unwrap(), "https://img.example.com/cover.jpg");
+        assert_eq!(result.score.unwrap(), 4.5);
+        assert_eq!(result.actors.len(), 2);
+        assert_eq!(result.release_date.unwrap(), "2023-01-15");
+    }
+
+    #[test]
+    fn test_deserialize_movie_info_full() {
+        let json = r#"{
+            "id": "ssis00123",
+            "number": "SSIS-123",
+            "title": "Movie Info Title",
+            "provider": "fanza",
+            "homepage": "https://example.com",
+            "actors": ["actress_a", "actress_b"],
+            "genres": ["genre1", "genre2"],
+            "maker": "S1",
+            "label": "S1 NO.1 STYLE",
+            "series": "Series Name"
+        }"#;
+        let info: MovieInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.actors.len(), 2);
+        assert_eq!(info.genres.len(), 2);
+        assert_eq!(info.maker.unwrap(), "S1");
+        assert_eq!(info.label.unwrap(), "S1 NO.1 STYLE");
+        assert_eq!(info.series.unwrap(), "Series Name");
+    }
+
+    #[test]
+    fn test_deserialize_movie_info_minimal() {
+        let json = r#"{
+            "id": "test001",
+            "number": "TEST-001",
+            "title": "Minimal",
+            "provider": "test",
+            "homepage": "https://example.com"
+        }"#;
+        let info: MovieInfo = serde_json::from_str(json).unwrap();
+        assert!(info.actors.is_empty());
+        assert!(info.genres.is_empty());
+        assert!(info.maker.is_none());
+        assert!(info.label.is_none());
+        assert!(info.series.is_none());
+    }
+
+    #[test]
+    fn test_deserialize_actor_info_full() {
+        let json = r#"{
+            "id": "actor_001",
+            "name": "Actress Name",
+            "provider": "gfriends",
+            "homepage": "https://example.com/actor",
+            "aliases": ["alias1", "alias2"],
+            "images": ["https://img.example.com/1.jpg"]
+        }"#;
+        let actor: ActorInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(actor.id, "actor_001");
+        assert_eq!(actor.name, "Actress Name");
+        assert_eq!(actor.provider, "gfriends");
+        assert_eq!(actor.homepage, "https://example.com/actor");
+        assert_eq!(actor.aliases.len(), 2);
+        assert_eq!(actor.images.len(), 1);
+    }
+
+    #[test]
+    fn test_deserialize_actor_info_minimal() {
+        let json = r#"{
+            "id": "actor_001",
+            "name": "Actress Name",
+            "provider": "gfriends",
+            "homepage": "https://example.com"
+        }"#;
+        let actor: ActorInfo = serde_json::from_str(json).unwrap();
+        assert!(actor.aliases.is_empty());
+        assert!(actor.images.is_empty());
+    }
+
+    #[test]
+    fn test_client_new_base_url_trim() {
+        let client = Client::new("http://localhost:8080/".to_string(), None, None);
+        assert_eq!(client.base_url, "http://localhost:8080");
+
+        let client = Client::new("http://localhost:8080".to_string(), None, None);
+        assert_eq!(client.base_url, "http://localhost:8080");
+    }
+
+    #[test]
+    fn test_client_request_auth_header() {
+        let client = Client::new("http://localhost".to_string(), Some("mytoken".into()), None);
+        let req = client.request("/test");
+        let headers = req
+            .build()
+            .unwrap()
+            .headers()
+            .get("authorization")
+            .cloned();
+        assert!(headers.is_some());
+
+        let client = Client::new("http://localhost".to_string(), None, None);
+        let req = client.request("/test");
+        let headers = req
+            .build()
+            .unwrap()
+            .headers()
+            .get("authorization")
+            .cloned();
+        assert!(headers.is_none());
+    }
+}
