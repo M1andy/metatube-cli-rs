@@ -18,7 +18,7 @@ pub enum RunMode {
 
 /// CLI args (all optional during initial parse, validated after merge).
 #[derive(Parser, Debug)]
-#[command(name = "metatube-cli")]
+#[command(name = "metatube-cli-rs")]
 #[command(about = "Organize JAV videos by actress using MetaTube SDK")]
 #[command(version)]
 struct RawConfig {
@@ -202,8 +202,8 @@ fn load_config_file(custom_path: Option<&Path>) -> Option<ConfigFile> {
 /// Auto-discover config.toml in standard locations.
 fn discover_config_path() -> Option<PathBuf> {
     let candidates: Vec<PathBuf> = [
-        Some(PathBuf::from("metatube-cli.toml")),
-        dirs::config_dir().map(|d| d.join("metatube-cli").join("config.toml")),
+        Some(PathBuf::from("config.toml")),
+        dirs::config_dir().map(|d| d.join("metatube-cli-rs").join("config.toml")),
     ]
     .into_iter()
     .flatten()
