@@ -1,0 +1,50 @@
+# Rust build artifacts
+/target/
+
+# Cargo lockfile (for libraries, keep committed for binaries/end-user apps)
+# Cargo.lock
+
+# IDE & editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+.directory
+
+# Environment & config (local overrides)
+.env
+.env.*
+!.env.example
+*.local.toml
+config.test.toml
+
+# Debug binaries (VS Code / Windows)
+*.pdb
+
+# Coverage
+*.profraw
+coverage/
+tarpaulin-report.html
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+*.tmp
+*.bak

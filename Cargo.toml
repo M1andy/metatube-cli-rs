@@ -1,0 +1,21 @@
+[package]
+name = "metatube-cli-rs"
+version = "0.1.0"
+edition = "2021"
+description = "CLI frontend for MetaTube SDK - organize JAV videos by actress"
+
+[dependencies]
+clap = { version = "4", features = ["derive", "env"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["full"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+croner = "2"
+thiserror = "2"
+chrono = "0.4"
+toml = "0.8"
+dirs = "6"
