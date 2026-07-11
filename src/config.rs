@@ -5,12 +5,27 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 
+/// Run mode: single scan, scheduled, or file-system watch.
+#[derive(Debug, Clone, clap::ValueEnum, PartialEq)]
+pub enum RunMode {
+    /// Run once and exit.
+    Once,
+    /// Run on a cron schedule.
+    Cron,
+    /// Watch the download directory for new files.
+    Watch,
+}
+
 /// CLI args (all optional during initial parse, validated after merge).
 #[derive(Parser, Debug)]
 #[command(name = "metatube-cli")]
 #[command(about = "Organize JAV videos by actress using MetaTube SDK")]
 #[command(version)]
 struct RawConfig {
+    /// Run mode: once, cron, or watch
+    #[arg(long, env = "MODE")]
+    mode: Option<RunMode>,
+
     /// Directory to scan for video files
     #[arg(long, env = "JAV_DOWNLOAD", value_hint = clap::ValueHint::DirPath)]
     jav_download: Option<PathBuf>,
@@ -55,6 +70,7 @@ struct RawConfig {
 /// config.toml structure — all fields optional.
 #[derive(Debug, Default, Deserialize)]
 struct ConfigFile {
+    mode: Option<String>,
     jav_download: Option<String>,
     jav_output: Option<String>,
     server_url: Option<String>,
@@ -69,13 +85,14 @@ struct ConfigFile {
 /// Final merged config — all required fields resolved.
 #[derive(Debug, Clone)]
 pub struct Config {
+    pub mode: RunMode,
     pub jav_download: PathBuf,
     pub jav_output: PathBuf,
     pub server_url: String,
     pub token: Option<String>,
     pub proxy: Option<String>,
     pub min_size_mb: u64,
-    pub cron: Option<String>,
+    pub cron_expr: Option<String>,
     pub concurrency: usize,
     pub dry_run: bool,
 }
@@ -87,7 +104,33 @@ impl Config {
         // Load config file (custom path or auto-discover)
         let file = load_config_file(raw.config_path.as_deref());
 
+        // Merge mode: CLI (--mode) > env (MODE) > config.toml (mode) > default (Once)
+        let mode = raw
+            .mode
+            .or_else(|| {
+                file.as_ref()
+                    .and_then(|f| f.mode.as_deref())
+                    .and_then(parse_mode)
+            })
+            .unwrap_or(RunMode::Once);
+
+        // Merge cron_expr: CLI (--cron) > env (CRON) > config.toml (cron)
+        let cron_expr = raw
+            .cron
+            .or_else(|| file.as_ref().and_then(|f| f.cron.clone()));
+
+        // Validation
+        if mode == RunMode::Cron && cron_expr.is_none() {
+            panic!("--cron expression is required when mode is 'cron'. Set via CLI --cron, env CRON, or config.toml [cron].");
+        }
+        if mode == RunMode::Once && cron_expr.is_some() {
+            warn!(
+                "cron expression is set but mode is 'once'; use --mode cron to enable scheduled runs"
+            );
+        }
+
         Self {
+            mode,
             jav_download: raw.jav_download
                 .or_else(|| file.as_ref().and_then(|f| f.jav_download.as_ref()).map(PathBuf::from))
                 .expect("--jav-download is required (set via CLI, env JAV_DOWNLOAD, or config.toml)"),
@@ -102,7 +145,7 @@ impl Config {
             min_size_mb: raw.min_size_mb
                 .or_else(|| file.as_ref().and_then(|f| f.min_size_mb))
                 .unwrap_or(300),
-            cron: raw.cron.or_else(|| file.as_ref().and_then(|f| f.cron.clone())),
+            cron_expr,
             concurrency: raw.concurrency
                 .or_else(|| file.as_ref().and_then(|f| f.concurrency))
                 .unwrap_or(4),
@@ -112,6 +155,19 @@ impl Config {
 
     pub fn min_size_bytes(&self) -> u64 {
         self.min_size_mb * 1024 * 1024
+    }
+}
+
+/// Parse a mode string from config.toml.
+fn parse_mode(s: &str) -> Option<RunMode> {
+    match s {
+        "once" => Some(RunMode::Once),
+        "cron" => Some(RunMode::Cron),
+        "watch" => Some(RunMode::Watch),
+        other => {
+            warn!("unknown mode '{}' in config.toml, expected once/cron/watch", other);
+            None
+        }
     }
 }
 

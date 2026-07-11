@@ -50,7 +50,7 @@ pub async fn run(config: &Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn process_one(
+pub async fn process_one(
     client: &Client,
     jav_output: &PathBuf,
     dry_run: bool,
