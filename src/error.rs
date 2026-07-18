@@ -1,5 +1,45 @@
 use std::path::PathBuf;
 
+impl Error {
+    pub fn error_type(&self) -> &str {
+        match self {
+            Error::Io(_) => "Io",
+            Error::Http(_) => "Http",
+            Error::ClientInit(_) => "ClientInit",
+            Error::Api { .. } => "Api",
+            Error::NoResults(_) => "NoResults",
+            Error::NoMovieInfo { .. } => "NoMovieInfo",
+            Error::IdExtraction(_) => "IdExtraction",
+            Error::FileNotFound(_) => "FileNotFound",
+            Error::MoveFailed { .. } => "MoveFailed",
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            Error::Io(e) => {
+                matches!(e.kind(), std::io::ErrorKind::PermissionDenied)
+                    || (e.kind() == std::io::ErrorKind::Other
+                        && e.to_string().to_lowercase().contains("no space"))
+            }
+            Error::Http(_) => true,
+            Error::ClientInit(_) => true,
+            Error::Api { code, .. } => *code >= 500,
+            Error::NoResults(_) => false,
+            Error::NoMovieInfo { .. } => false,
+            Error::IdExtraction(_) => false,
+            Error::FileNotFound(_) => true,
+            Error::MoveFailed { reason, .. } => {
+                let r = reason.to_lowercase();
+                r.contains("permission denied")
+                    || r.contains("access is denied")
+                    || r.contains("cross-device")
+            }
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 #[allow(dead_code)]
 pub enum Error {
@@ -103,5 +143,157 @@ mod tests {
     fn test_display_client_init() {
         let e = Error::ClientInit("bad proxy".into());
         assert_eq!(e.to_string(), "Client initialization error: bad proxy");
+    }
+
+    #[test]
+    fn test_error_type() {
+        assert_eq!(
+            Error::Io(std::io::Error::new(std::io::ErrorKind::Other, "")).error_type(),
+            "Io"
+        );
+        assert_eq!(Error::ClientInit("x".into()).error_type(), "ClientInit");
+        assert_eq!(
+            Error::Api {
+                code: 500,
+                message: "x".into()
+            }
+            .error_type(),
+            "Api"
+        );
+        assert_eq!(Error::NoResults("x".into()).error_type(), "NoResults");
+        assert_eq!(
+            Error::NoMovieInfo {
+                provider: "x".into(),
+                id: "x".into()
+            }
+            .error_type(),
+            "NoMovieInfo"
+        );
+        assert_eq!(Error::IdExtraction("x".into()).error_type(), "IdExtraction");
+        assert_eq!(
+            Error::FileNotFound(PathBuf::from("x")).error_type(),
+            "FileNotFound"
+        );
+        assert_eq!(
+            Error::MoveFailed {
+                src: PathBuf::from("a"),
+                dst: PathBuf::from("b"),
+                reason: "x".into()
+            }
+            .error_type(),
+            "MoveFailed"
+        );
+    }
+
+    #[test]
+    fn test_is_retryable_api_5xx() {
+        assert!(Error::Api {
+            code: 500,
+            message: "Internal Server Error".into()
+        }
+        .is_retryable());
+        assert!(Error::Api {
+            code: 502,
+            message: "Bad Gateway".into()
+        }
+        .is_retryable());
+        assert!(Error::Api {
+            code: 503,
+            message: "Service Unavailable".into()
+        }
+        .is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_api_4xx_not_retryable() {
+        assert!(!Error::Api {
+            code: 400,
+            message: "Bad Request".into()
+        }
+        .is_retryable());
+        assert!(!Error::Api {
+            code: 401,
+            message: "Unauthorized".into()
+        }
+        .is_retryable());
+        assert!(!Error::Api {
+            code: 404,
+            message: "Not Found".into()
+        }
+        .is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_io_permission() {
+        assert!(Error::Io(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "permission denied"
+        ))
+        .is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_io_nospace() {
+        assert!(Error::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "no space left on device"
+        ))
+        .is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_io_notfound_not_retryable() {
+        assert!(!Error::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "file not found"
+        ))
+        .is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_move_failed_permission() {
+        assert!(Error::MoveFailed {
+            src: PathBuf::from("a"),
+            dst: PathBuf::from("b"),
+            reason: "Permission denied".into()
+        }
+        .is_retryable());
+        assert!(Error::MoveFailed {
+            src: PathBuf::from("a"),
+            dst: PathBuf::from("b"),
+            reason: "Access is denied".into()
+        }
+        .is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_move_failed_cross_device() {
+        assert!(Error::MoveFailed {
+            src: PathBuf::from("a"),
+            dst: PathBuf::from("b"),
+            reason: "Invalid cross-device link".into()
+        }
+        .is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_non_retryable_errors() {
+        assert!(!Error::IdExtraction("x".into()).is_retryable());
+        assert!(!Error::NoResults("x".into()).is_retryable());
+        assert!(!Error::NoMovieInfo {
+            provider: "x".into(),
+            id: "x".into()
+        }
+        .is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_client_init() {
+        assert!(Error::ClientInit("bad proxy config".into()).is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_file_not_found() {
+        assert!(Error::FileNotFound(PathBuf::from("missing.mp4")).is_retryable());
     }
 }

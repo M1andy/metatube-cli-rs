@@ -30,6 +30,7 @@ async fn main() -> anyhow::Result<()> {
     info!("══════════════════════════════════════");
     info!("  下载目录: {}", config.jav_download.display());
     info!("  输出目录: {}", config.jav_output.display());
+    info!("  失败目录: {}", config.jav_failed.display());
     info!(
         "  运行模式: {}",
         match config.mode {

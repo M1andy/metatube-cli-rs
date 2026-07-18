@@ -67,6 +67,10 @@ struct RawConfig {
     #[arg(long, env = "CONFIG")]
     config_path: Option<PathBuf>,
 
+    /// Directory for failed videos (default: <jav_output>/../JAV_failed)
+    #[arg(long, env = "JAV_FAILED", value_hint = clap::ValueHint::DirPath)]
+    jav_failed: Option<PathBuf>,
+
     /// Disable progress bar even if terminal is interactive
     #[arg(long)]
     no_progress: bool,
@@ -78,6 +82,7 @@ struct ConfigFile {
     mode: Option<String>,
     jav_download: Option<String>,
     jav_output: Option<String>,
+    jav_failed: Option<String>,
     server_url: Option<String>,
     token: Option<String>,
     proxy: Option<String>,
@@ -94,6 +99,7 @@ pub struct Config {
     pub mode: RunMode,
     pub jav_download: PathBuf,
     pub jav_output: PathBuf,
+    pub jav_failed: PathBuf,
     pub server_url: String,
     pub token: Option<String>,
     pub proxy: Option<String>,
@@ -157,10 +163,25 @@ impl Config {
                 "--jav-output is required (set via CLI, env JAV_OUTPUT, or config.toml)"
             })?;
 
+        let jav_failed = raw
+            .jav_failed
+            .or_else(|| {
+                file.as_ref()
+                    .and_then(|f| f.jav_failed.as_ref())
+                    .map(PathBuf::from)
+            })
+            .unwrap_or_else(|| {
+                jav_output
+                    .parent()
+                    .unwrap_or(Path::new("."))
+                    .join("JAV_failed")
+            });
+
         Ok(Self {
             mode,
             jav_download,
             jav_output,
+            jav_failed,
             server_url: raw
                 .server_url
                 .or_else(|| file.as_ref().and_then(|f| f.server_url.clone()))
@@ -284,6 +305,7 @@ mod tests {
             mode: RunMode::Once,
             jav_download: PathBuf::from("/tmp/dl"),
             jav_output: PathBuf::from("/tmp/out"),
+            jav_failed: PathBuf::from("/tmp/JAV_failed"),
             server_url: "http://localhost".into(),
             token: None,
             proxy: None,
