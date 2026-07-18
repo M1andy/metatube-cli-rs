@@ -1,5 +1,6 @@
 /// CLI argument parsing with config.toml support.
 /// Priority: CLI args > env vars > config.toml > defaults.
+use anyhow::{bail, Context};
 use clap::Parser;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -65,6 +66,10 @@ struct RawConfig {
     /// Path to config.toml (skips auto-discovery)
     #[arg(long, env = "CONFIG")]
     config_path: Option<PathBuf>,
+
+    /// Disable progress bar even if terminal is interactive
+    #[arg(long)]
+    no_progress: bool,
 }
 
 /// config.toml structure — all fields optional.
@@ -80,6 +85,7 @@ struct ConfigFile {
     cron: Option<String>,
     concurrency: Option<usize>,
     dry_run: Option<bool>,
+    no_progress: Option<bool>,
 }
 
 /// Final merged config — all required fields resolved.
@@ -95,10 +101,12 @@ pub struct Config {
     pub cron_expr: Option<String>,
     pub concurrency: usize,
     pub dry_run: bool,
+    #[allow(dead_code)]
+    pub no_progress: bool,
 }
 
 impl Config {
-    pub fn load() -> Self {
+    pub fn load() -> anyhow::Result<Self> {
         let raw = RawConfig::parse();
 
         // Load config file (custom path or auto-discover)
@@ -121,7 +129,7 @@ impl Config {
 
         // Validation
         if mode == RunMode::Cron && cron_expr.is_none() {
-            panic!("--cron expression is required when mode is 'cron'. Set via CLI --cron, env CRON, or config.toml [cron].");
+            bail!("--cron expression is required when mode is 'cron'. Set via CLI --cron, env CRON, or config.toml [cron].");
         }
         if mode == RunMode::Once && cron_expr.is_some() {
             warn!(
@@ -129,14 +137,20 @@ impl Config {
             );
         }
 
-        Self {
+        let jav_download = raw
+            .jav_download
+            .or_else(|| file.as_ref().and_then(|f| f.jav_download.as_ref()).map(PathBuf::from))
+            .with_context(|| "--jav-download is required (set via CLI, env JAV_DOWNLOAD, or config.toml)")?;
+
+        let jav_output = raw
+            .jav_output
+            .or_else(|| file.as_ref().and_then(|f| f.jav_output.as_ref()).map(PathBuf::from))
+            .with_context(|| "--jav-output is required (set via CLI, env JAV_OUTPUT, or config.toml)")?;
+
+        Ok(Self {
             mode,
-            jav_download: raw.jav_download
-                .or_else(|| file.as_ref().and_then(|f| f.jav_download.as_ref()).map(PathBuf::from))
-                .expect("--jav-download is required (set via CLI, env JAV_DOWNLOAD, or config.toml)"),
-            jav_output: raw.jav_output
-                .or_else(|| file.as_ref().and_then(|f| f.jav_output.as_ref()).map(PathBuf::from))
-                .expect("--jav-output is required (set via CLI, env JAV_OUTPUT, or config.toml)"),
+            jav_download,
+            jav_output,
             server_url: raw.server_url
                 .or_else(|| file.as_ref().and_then(|f| f.server_url.clone()))
                 .unwrap_or_else(|| "http://localhost:8080".into()),
@@ -150,7 +164,8 @@ impl Config {
                 .or_else(|| file.as_ref().and_then(|f| f.concurrency))
                 .unwrap_or(4),
             dry_run: raw.dry_run || file.as_ref().and_then(|f| f.dry_run).unwrap_or(false),
-        }
+            no_progress: raw.no_progress || file.as_ref().and_then(|f| f.no_progress).unwrap_or(false),
+        })
     }
 
     pub fn min_size_bytes(&self) -> u64 {
@@ -160,7 +175,7 @@ impl Config {
 
 /// Parse a mode string from config.toml.
 fn parse_mode(s: &str) -> Option<RunMode> {
-    match s {
+    match s.to_lowercase().as_str() {
         "once" => Some(RunMode::Once),
         "cron" => Some(RunMode::Cron),
         "watch" => Some(RunMode::Watch),
@@ -230,11 +245,19 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_mode_case_insensitive() {
+        assert_eq!(parse_mode("ONCE"), Some(RunMode::Once));
+        assert_eq!(parse_mode("Once"), Some(RunMode::Once));
+        assert_eq!(parse_mode("CRON"), Some(RunMode::Cron));
+        assert_eq!(parse_mode("Cron"), Some(RunMode::Cron));
+        assert_eq!(parse_mode("WATCH"), Some(RunMode::Watch));
+        assert_eq!(parse_mode("Watch"), Some(RunMode::Watch));
+    }
+
+    #[test]
     fn test_parse_mode_invalid() {
         assert_eq!(parse_mode(""), None);
         assert_eq!(parse_mode("invalid"), None);
-        assert_eq!(parse_mode("ONCE"), None);
-        assert_eq!(parse_mode("Cron"), None);
     }
 
     #[test]
@@ -250,6 +273,7 @@ mod tests {
             cron_expr: None,
             concurrency: 4,
             dry_run: false,
+            no_progress: false,
         };
         assert_eq!(config.min_size_bytes(), 300 * 1024 * 1024);
 
@@ -286,6 +310,7 @@ jav_output = "/tmp/out"
 concurrency = 8
 dry_run = true
 min_size_mb = 100
+no_progress = true
 "#;
         let cf: ConfigFile = toml::from_str(toml_str).unwrap();
         assert_eq!(cf.mode.unwrap(), "cron");
@@ -293,6 +318,7 @@ min_size_mb = 100
         assert_eq!(cf.concurrency.unwrap(), 8);
         assert_eq!(cf.dry_run.unwrap(), true);
         assert_eq!(cf.min_size_mb.unwrap(), 100);
+        assert_eq!(cf.no_progress.unwrap(), true);
     }
 
     #[test]

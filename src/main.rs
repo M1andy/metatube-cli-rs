@@ -22,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
         .event_format(CleanFormat)
         .init();
 
-    let config = Config::load();
+    let config = Config::load()?;
 
     // Startup banner
     info!("══════════════════════════════════════");
@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
             let cron_expr = config
                 .cron_expr
                 .as_ref()
-                .expect("cron expression required for cron mode");
+                .ok_or_else(|| anyhow::anyhow!("cron expression required for cron mode"))?;
             info!("→ 定时模式已启动，计划: {}", cron_expr);
             scheduler::run_scheduled(&config, cron_expr).await?;
         }

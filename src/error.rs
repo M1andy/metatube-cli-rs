@@ -1,12 +1,16 @@
 use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
+#[allow(dead_code)]
 pub enum Error {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
+
+    #[error("Client initialization error: {0}")]
+    ClientInit(String),
 
     #[error("API error ({code}): {message}")]
     Api { code: u16, message: String },
@@ -84,6 +88,12 @@ mod tests {
         let io_err = io::Error::new(io::ErrorKind::NotFound, "file missing");
         let e = Error::from(io_err);
         assert!(e.to_string().contains("IO error"));
+    }
+
+    #[test]
+    fn test_display_client_init() {
+        let e = Error::ClientInit("bad proxy".into());
+        assert_eq!(e.to_string(), "Client initialization error: bad proxy");
     }
 }
 

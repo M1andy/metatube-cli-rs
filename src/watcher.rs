@@ -5,6 +5,7 @@ use crate::config::Config;
 use crate::processor::process_one;
 use crate::scanner::{VideoFile, VIDEO_EXTENSIONS};
 use notify_debouncer_mini::{new_debouncer, DebouncedEvent};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info, warn};
@@ -14,20 +15,23 @@ pub async fn run_watch(config: &Config) -> anyhow::Result<()> {
         config.server_url.clone(),
         config.token.clone(),
         config.proxy.as_deref(),
-    ));
+    )?);
     let jav_output = config.jav_output.clone();
     let dry_run = config.dry_run;
     let min_size = config.min_size_bytes();
     let watch_dir = config.jav_download.clone();
 
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<DebouncedEvent>>();
+    let stop_flag = Arc::new(AtomicBool::new(false));
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<DebouncedEvent>>(128);
 
     // Spawn blocking watcher on a dedicated OS thread.
+    let stop = stop_flag.clone();
     let _watcher_handle = tokio::task::spawn_blocking(move || {
         let mut debouncer = match new_debouncer(Duration::from_secs(5), move |events| {
             match events {
                 Ok(evts) => {
-                    let _ = tx.send(evts);
+                    let _ = tx.try_send(evts);
                 }
                 Err(e) => error!("⚠ 文件监视出错: {}", e),
             }
@@ -39,11 +43,11 @@ pub async fn run_watch(config: &Config) -> anyhow::Result<()> {
             }
         };
 
-        if let Err(_e) = debouncer
+        if let Err(e) = debouncer
             .watcher()
             .watch(&watch_dir, notify::RecursiveMode::Recursive)
         {
-            error!("✗ 无法监视文件夹: {}", watch_dir.display());
+            error!("✗ 无法监视文件夹: {} — {}", watch_dir.display(), e);
             return;
         }
 
@@ -51,58 +55,88 @@ pub async fn run_watch(config: &Config) -> anyhow::Result<()> {
 
         // Keep the debouncer alive; its internal thread calls our callback.
         loop {
-            std::thread::park();
+            std::thread::sleep(Duration::from_millis(500));
+            if stop.load(Ordering::SeqCst) {
+                drop(debouncer);
+                break;
+            }
         }
     });
 
     info!("→ 等待新视频文件...");
 
-    while let Some(events) = rx.recv().await {
-        for event in events {
-            let path = &event.path;
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("收到终止信号，关闭文件监视...");
+                stop_flag.store(true, Ordering::SeqCst);
+                break;
+            }
+            events = rx.recv() => {
+                let events = match events {
+                    Some(e) => e,
+                    None => break,
+                };
 
-            if !path.is_file() {
-                continue;
-            }
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.to_lowercase());
-            let is_video = ext
-                .as_deref()
-                .is_some_and(|e| VIDEO_EXTENSIONS.contains(&e));
-            if !is_video {
-                continue;
-            }
-            let size = match std::fs::metadata(path) {
-                Ok(m) => m.len(),
-                Err(e) => {
-                    warn!("⚠ 无法读取文件: {} — {}", path.display(), e);
-                    continue;
+                for event in events {
+                    let path = &event.path;
+
+                    if !path.is_file() {
+                        continue;
+                    }
+                    let ext = path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.to_lowercase());
+                    let is_video = ext
+                        .as_deref()
+                        .is_some_and(|e| VIDEO_EXTENSIONS.contains(&e));
+                    if !is_video {
+                        continue;
+                    }
+                    let size = match std::fs::metadata(path) {
+                        Ok(m) => m.len(),
+                        Err(e) => {
+                            warn!("⚠ 无法读取文件: {} — {}", path.display(), e);
+                            continue;
+                        }
+                    };
+                    if size < min_size {
+                        continue;
+                    }
+
+                    // File size stability check: wait and verify size hasn't changed
+                    let path_for_check = path.clone();
+                    let initial_size = size;
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                    match std::fs::metadata(&path_for_check) {
+                        Ok(meta) if meta.len() == initial_size => {}
+                        _ => {
+                            info!("文件仍在写入中，延迟处理: {}", path_for_check.display());
+                            continue;
+                        }
+                    }
+
+                    let filename = path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    let video = VideoFile {
+                        path: path.clone(),
+                        size: initial_size,
+                        filename,
+                    };
+
+                    let client = client.clone();
+                    let jav_output = jav_output.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = process_one(client, &jav_output, dry_run, &video).await {
+                            error!("✗ 文件处理失败: {} — {:#}", video.filename, e);
+                        }
+                    });
                 }
-            };
-            if size < min_size {
-                continue;
             }
-
-            let filename = path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            let video = VideoFile {
-                path: path.clone(),
-                size,
-                filename,
-            };
-
-            let client = client.clone();
-            let jav_output = jav_output.clone();
-            tokio::spawn(async move {
-                if let Err(_e) = process_one(&client, &jav_output, dry_run, &video).await {
-                    error!("✗ 文件处理失败: {}", video.filename);
-                }
-            });
         }
     }
 

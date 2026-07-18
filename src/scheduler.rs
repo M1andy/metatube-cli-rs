@@ -1,20 +1,48 @@
 use crate::config::Config;
 use crate::processor;
 use chrono::Utc;
-use tracing::{error, info};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tracing::{error, info, warn};
 
 pub async fn run_scheduled(config: &Config, cron_expr: &str) -> anyhow::Result<()> {
     let schedule = croner::Cron::new(cron_expr).parse()?;
 
+    let running = Arc::new(AtomicBool::new(false));
+
     run_once(config).await;
 
     loop {
-        let next = schedule.find_next_occurrence(&Utc::now(), false)?;
+        let next = match schedule.find_next_occurrence(&Utc::now(), false) {
+            Ok(n) => n,
+            Err(e) => {
+                error!("✗ cron 计算下次执行时间失败: {}", e);
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                continue;
+            }
+        };
+
         let delay = (next - Utc::now()).num_seconds().max(0) as u64;
         info!("→ 下次执行: {}", format_duration(delay));
-        tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
-        run_once(config).await;
+
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("收到终止信号，调度器退出");
+                break;
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_secs(delay)) => {
+                if running.load(Ordering::SeqCst) {
+                    warn!("上一轮扫描尚未完成，跳过本次执行");
+                    continue;
+                }
+                running.store(true, Ordering::SeqCst);
+                run_once(config).await;
+                running.store(false, Ordering::SeqCst);
+            }
+        }
     }
+
+    Ok(())
 }
 
 fn format_duration(seconds: u64) -> String {
@@ -30,7 +58,7 @@ fn format_duration(seconds: u64) -> String {
 async fn run_once(config: &Config) {
     match processor::run(config).await {
         Ok(()) => info!("✓ 本轮扫描完成"),
-        Err(_e) => error!("✗ 扫描执行失败，将在下次计划重试"),
+        Err(e) => error!("✗ 扫描执行失败，将在下次计划重试: {:#}", e),
     }
 }
 

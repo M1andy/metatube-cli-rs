@@ -3,7 +3,7 @@
 use crate::error::Error;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::Deserialize;
-use tracing::{debug, error, instrument};
+use tracing::{debug, error, instrument, warn};
 
 #[derive(Debug, Deserialize)]
 struct ApiResponse<T> {
@@ -19,6 +19,7 @@ struct ApiErrorBody {
 
 /// Mirrors `model.MovieSearchResult`.
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct MovieSearchResult {
     pub id: String,
     pub number: String,
@@ -39,6 +40,7 @@ pub struct MovieSearchResult {
 
 /// Mirrors `model.MovieInfo`.
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct MovieInfo {
     pub id: String,
     pub number: String,
@@ -59,6 +61,7 @@ pub struct MovieInfo {
 
 /// Mirrors `model.ActorInfo`.
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct ActorInfo {
     pub id: String,
     pub name: String,
@@ -77,21 +80,24 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(base_url: String, token: Option<String>, proxy: Option<&str>) -> Self {
+    pub fn new(base_url: String, token: Option<String>, proxy: Option<&str>) -> Result<Self, Error> {
         let mut builder = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(120));
         if let Some(proxy_url) = proxy {
-            let p = reqwest::Proxy::all(proxy_url).expect("invalid proxy url");
+            let p = reqwest::Proxy::all(proxy_url)
+                .map_err(|e| Error::ClientInit(format!("invalid proxy url: {}", e)))?;
             builder = builder.proxy(p);
         } else {
             builder = builder.no_proxy();
         }
-        let inner = builder.build().expect("failed to build reqwest client");
-        Client {
+        let inner = builder
+            .build()
+            .map_err(|e| Error::ClientInit(format!("failed to build reqwest client: {}", e)))?;
+        Ok(Client {
             inner,
             base_url: base_url.trim_end_matches('/').to_string(),
             token,
-        }
+        })
     }
 
     fn request(&self, path: &str) -> reqwest::RequestBuilder {
@@ -104,6 +110,26 @@ impl Client {
     }
 
     async fn get_data<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T, Error> {
+        let mut last_err = None;
+        for attempt in 0u32..3 {
+            match self.get_data_once::<T>(path).await {
+                Ok(data) => return Ok(data),
+                Err(e) => {
+                    let retryable = matches!(&e, Error::Http(_));
+                    if !retryable || attempt >= 2 {
+                        return Err(e);
+                    }
+                    last_err = Some(e);
+                    let delay_secs = 1u64 << attempt;
+                    warn!("请求失败，{}秒后重试 ({}/3)...", delay_secs, attempt + 1);
+                    tokio::time::sleep(std::time::Duration::from_secs(delay_secs)).await;
+                }
+            }
+        }
+        Err(last_err.unwrap())
+    }
+
+    async fn get_data_once<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T, Error> {
         let response = match self.request(path).send().await {
             Ok(r) => r,
             Err(e) => {
@@ -130,7 +156,7 @@ impl Client {
     /// Search for a movie by keyword. Returns the first result.
     #[instrument(skip(self), fields(keyword = %keyword))]
     pub async fn search_movie(&self, keyword: &str) -> Result<MovieSearchResult, Error> {
-        let path = format!("/v1/movies/search?q={}&fallback=true", urlencode(keyword));
+        let path = format!("/v1/movies/search?q={}&fallback=true", urlencoding::encode(keyword));
         debug!("→ 搜索影片: {}", keyword);
         let results: Vec<MovieSearchResult> = self.get_data(&path).await?;
         results.into_iter().next().ok_or_else(|| Error::NoResults(keyword.to_string()))
@@ -139,7 +165,7 @@ impl Client {
     /// Get full movie info by provider and ID.
     #[instrument(skip(self), fields(provider = %provider, id = %id))]
     pub async fn get_movie_info(&self, provider: &str, id: &str) -> Result<MovieInfo, Error> {
-        let path = format!("/v1/movies/{}/{}?lazy=false", urlencode(provider), urlencode(id));
+        let path = format!("/v1/movies/{}/{}?lazy=false", urlencoding::encode(provider), urlencoding::encode(id));
         // trace only - too verbose for debug
         self.get_data(&path).await
     }
@@ -147,14 +173,10 @@ impl Client {
     /// Get actor info from Gfriends for name normalization.
     #[instrument(skip(self), fields(name = %name))]
     pub async fn get_gfriends_actor(&self, name: &str) -> Result<ActorInfo, Error> {
-        let path = format!("/v1/actors/gfriends/{}", urlencode(name));
+        let path = format!("/v1/actors/gfriends/{}", urlencoding::encode(name));
         // trace only - too verbose for debug
         self.get_data(&path).await
     }
-}
-
-fn urlencode(s: &str) -> String {
-    s.replace(' ', "%20")
 }
 
 #[cfg(test)]
@@ -163,9 +185,17 @@ mod tests {
 
     #[test]
     fn test_urlencode() {
-        assert_eq!(urlencode("hello world"), "hello%20world");
-        assert_eq!(urlencode("no_spaces"), "no_spaces");
-        assert_eq!(urlencode(""), "");
+        assert_eq!(urlencoding::encode("hello world"), "hello%20world");
+        assert_eq!(urlencoding::encode("no_spaces"), "no_spaces");
+        assert_eq!(urlencoding::encode(""), "");
+    }
+
+    #[test]
+    fn test_urlencode_special_chars() {
+        assert_eq!(urlencoding::encode("你好"), "%E4%BD%A0%E5%A5%BD");
+        assert_eq!(urlencoding::encode("a+b"), "a%2Bb");
+        assert_eq!(urlencoding::encode("a/b"), "a%2Fb");
+        assert_eq!(urlencoding::encode("ABP-030 @test"), "ABP-030%20%40test");
     }
 
     #[test]
@@ -285,16 +315,22 @@ mod tests {
 
     #[test]
     fn test_client_new_base_url_trim() {
-        let client = Client::new("http://localhost:8080/".to_string(), None, None);
+        let client = Client::new("http://localhost:8080/".to_string(), None, None).unwrap();
         assert_eq!(client.base_url, "http://localhost:8080");
 
-        let client = Client::new("http://localhost:8080".to_string(), None, None);
+        let client = Client::new("http://localhost:8080".to_string(), None, None).unwrap();
         assert_eq!(client.base_url, "http://localhost:8080");
     }
 
     #[test]
+    fn test_client_new_invalid_proxy() {
+        let result = Client::new("http://localhost".to_string(), None, Some("not a url"));
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_client_request_auth_header() {
-        let client = Client::new("http://localhost".to_string(), Some("mytoken".into()), None);
+        let client = Client::new("http://localhost".to_string(), Some("mytoken".into()), None).unwrap();
         let req = client.request("/test");
         let headers = req
             .build()
@@ -304,7 +340,7 @@ mod tests {
             .cloned();
         assert!(headers.is_some());
 
-        let client = Client::new("http://localhost".to_string(), None, None);
+        let client = Client::new("http://localhost".to_string(), None, None).unwrap();
         let req = client.request("/test");
         let headers = req
             .build()
