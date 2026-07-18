@@ -80,9 +80,12 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(base_url: String, token: Option<String>, proxy: Option<&str>) -> Result<Self, Error> {
-        let mut builder = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(120));
+    pub fn new(
+        base_url: String,
+        token: Option<String>,
+        proxy: Option<&str>,
+    ) -> Result<Self, Error> {
+        let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120));
         if let Some(proxy_url) = proxy {
             let p = reqwest::Proxy::all(proxy_url)
                 .map_err(|e| Error::ClientInit(format!("invalid proxy url: {}", e)))?;
@@ -102,7 +105,10 @@ impl Client {
 
     fn request(&self, path: &str) -> reqwest::RequestBuilder {
         let url = format!("{}{}", self.base_url, path);
-        let mut req = self.inner.get(&url).header(CONTENT_TYPE, "application/json");
+        let mut req = self
+            .inner
+            .get(&url)
+            .header(CONTENT_TYPE, "application/json");
         if let Some(ref token) = self.token {
             req = req.header(AUTHORIZATION, format!("Bearer {}", token));
         }
@@ -141,31 +147,53 @@ impl Client {
         if !status.is_success() {
             if let Ok(body) = response.json::<ApiResponse<T>>().await {
                 if let Some(e) = body.error {
-                    return Err(Error::Api { code: e.code, message: e.message });
+                    return Err(Error::Api {
+                        code: e.code,
+                        message: e.message,
+                    });
                 }
             }
-            return Err(Error::Api { code: status.as_u16(), message: status.to_string() });
+            return Err(Error::Api {
+                code: status.as_u16(),
+                message: status.to_string(),
+            });
         }
         let body: ApiResponse<T> = response.json().await?;
         if let Some(e) = body.error {
-            return Err(Error::Api { code: e.code, message: e.message });
+            return Err(Error::Api {
+                code: e.code,
+                message: e.message,
+            });
         }
-        body.data.ok_or_else(|| Error::Api { code: 500, message: "empty data".into() })
+        body.data.ok_or_else(|| Error::Api {
+            code: 500,
+            message: "empty data".into(),
+        })
     }
 
     /// Search for a movie by keyword. Returns the first result.
     #[instrument(skip(self), fields(keyword = %keyword))]
     pub async fn search_movie(&self, keyword: &str) -> Result<MovieSearchResult, Error> {
-        let path = format!("/v1/movies/search?q={}&fallback=true", urlencoding::encode(keyword));
+        let path = format!(
+            "/v1/movies/search?q={}&fallback=true",
+            urlencoding::encode(keyword)
+        );
         debug!("→ 搜索影片: {}", keyword);
         let results: Vec<MovieSearchResult> = self.get_data(&path).await?;
-        results.into_iter().next().ok_or_else(|| Error::NoResults(keyword.to_string()))
+        results
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::NoResults(keyword.to_string()))
     }
 
     /// Get full movie info by provider and ID.
     #[instrument(skip(self), fields(provider = %provider, id = %id))]
     pub async fn get_movie_info(&self, provider: &str, id: &str) -> Result<MovieInfo, Error> {
-        let path = format!("/v1/movies/{}/{}?lazy=false", urlencoding::encode(provider), urlencoding::encode(id));
+        let path = format!(
+            "/v1/movies/{}/{}?lazy=false",
+            urlencoding::encode(provider),
+            urlencoding::encode(id)
+        );
         // trace only - too verbose for debug
         self.get_data(&path).await
     }
@@ -235,8 +263,14 @@ mod tests {
             "release_date": "2023-01-15"
         }"#;
         let result: MovieSearchResult = serde_json::from_str(json).unwrap();
-        assert_eq!(result.thumb_url.unwrap(), "https://img.example.com/thumb.jpg");
-        assert_eq!(result.cover_url.unwrap(), "https://img.example.com/cover.jpg");
+        assert_eq!(
+            result.thumb_url.unwrap(),
+            "https://img.example.com/thumb.jpg"
+        );
+        assert_eq!(
+            result.cover_url.unwrap(),
+            "https://img.example.com/cover.jpg"
+        );
         assert_eq!(result.score.unwrap(), 4.5);
         assert_eq!(result.actors.len(), 2);
         assert_eq!(result.release_date.unwrap(), "2023-01-15");
@@ -330,24 +364,15 @@ mod tests {
 
     #[test]
     fn test_client_request_auth_header() {
-        let client = Client::new("http://localhost".to_string(), Some("mytoken".into()), None).unwrap();
+        let client =
+            Client::new("http://localhost".to_string(), Some("mytoken".into()), None).unwrap();
         let req = client.request("/test");
-        let headers = req
-            .build()
-            .unwrap()
-            .headers()
-            .get("authorization")
-            .cloned();
+        let headers = req.build().unwrap().headers().get("authorization").cloned();
         assert!(headers.is_some());
 
         let client = Client::new("http://localhost".to_string(), None, None).unwrap();
         let req = client.request("/test");
-        let headers = req
-            .build()
-            .unwrap()
-            .headers()
-            .get("authorization")
-            .cloned();
+        let headers = req.build().unwrap().headers().get("authorization").cloned();
         assert!(headers.is_none());
     }
 }

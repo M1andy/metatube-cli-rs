@@ -132,39 +132,57 @@ impl Config {
             bail!("--cron expression is required when mode is 'cron'. Set via CLI --cron, env CRON, or config.toml [cron].");
         }
         if mode == RunMode::Once && cron_expr.is_some() {
-            warn!(
-                "⚠ 已设置定时计划，但运行模式为单次。使用 --mode cron 启用定时"
-            );
+            warn!("⚠ 已设置定时计划，但运行模式为单次。使用 --mode cron 启用定时");
         }
 
         let jav_download = raw
             .jav_download
-            .or_else(|| file.as_ref().and_then(|f| f.jav_download.as_ref()).map(PathBuf::from))
-            .with_context(|| "--jav-download is required (set via CLI, env JAV_DOWNLOAD, or config.toml)")?;
+            .or_else(|| {
+                file.as_ref()
+                    .and_then(|f| f.jav_download.as_ref())
+                    .map(PathBuf::from)
+            })
+            .with_context(|| {
+                "--jav-download is required (set via CLI, env JAV_DOWNLOAD, or config.toml)"
+            })?;
 
         let jav_output = raw
             .jav_output
-            .or_else(|| file.as_ref().and_then(|f| f.jav_output.as_ref()).map(PathBuf::from))
-            .with_context(|| "--jav-output is required (set via CLI, env JAV_OUTPUT, or config.toml)")?;
+            .or_else(|| {
+                file.as_ref()
+                    .and_then(|f| f.jav_output.as_ref())
+                    .map(PathBuf::from)
+            })
+            .with_context(|| {
+                "--jav-output is required (set via CLI, env JAV_OUTPUT, or config.toml)"
+            })?;
 
         Ok(Self {
             mode,
             jav_download,
             jav_output,
-            server_url: raw.server_url
+            server_url: raw
+                .server_url
                 .or_else(|| file.as_ref().and_then(|f| f.server_url.clone()))
                 .unwrap_or_else(|| "http://localhost:8080".into()),
-            token: raw.token.or_else(|| file.as_ref().and_then(|f| f.token.clone())),
-            proxy: raw.proxy.or_else(|| file.as_ref().and_then(|f| f.proxy.clone())),
-            min_size_mb: raw.min_size_mb
+            token: raw
+                .token
+                .or_else(|| file.as_ref().and_then(|f| f.token.clone())),
+            proxy: raw
+                .proxy
+                .or_else(|| file.as_ref().and_then(|f| f.proxy.clone())),
+            min_size_mb: raw
+                .min_size_mb
                 .or_else(|| file.as_ref().and_then(|f| f.min_size_mb))
                 .unwrap_or(300),
             cron_expr,
-            concurrency: raw.concurrency
+            concurrency: raw
+                .concurrency
                 .or_else(|| file.as_ref().and_then(|f| f.concurrency))
                 .unwrap_or(4),
             dry_run: raw.dry_run || file.as_ref().and_then(|f| f.dry_run).unwrap_or(false),
-            no_progress: raw.no_progress || file.as_ref().and_then(|f| f.no_progress).unwrap_or(false),
+            no_progress: raw.no_progress
+                || file.as_ref().and_then(|f| f.no_progress).unwrap_or(false),
         })
     }
 

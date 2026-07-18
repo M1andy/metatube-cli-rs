@@ -43,7 +43,10 @@ mod tests {
     #[test]
     fn test_display_id_extraction() {
         let e = Error::IdExtraction("bad_file.txt".into());
-        assert_eq!(e.to_string(), "Failed to extract ID from filename: bad_file.txt");
+        assert_eq!(
+            e.to_string(),
+            "Failed to extract ID from filename: bad_file.txt"
+        );
     }
 
     #[test]
@@ -54,7 +57,10 @@ mod tests {
 
     #[test]
     fn test_display_api_error() {
-        let e = Error::Api { code: 404, message: "Not Found".into() };
+        let e = Error::Api {
+            code: 404,
+            message: "Not Found".into(),
+        };
         assert_eq!(e.to_string(), "API error (404): Not Found");
     }
 
@@ -79,7 +85,10 @@ mod tests {
 
     #[test]
     fn test_display_no_movie_info() {
-        let e = Error::NoMovieInfo { provider: "fanza".into(), id: "ssis00123".into() };
+        let e = Error::NoMovieInfo {
+            provider: "fanza".into(),
+            id: "ssis00123".into(),
+        };
         assert_eq!(e.to_string(), "No movie info found for: fanza/ssis00123");
     }
 
@@ -96,4 +105,3 @@ mod tests {
         assert_eq!(e.to_string(), "Client initialization error: bad proxy");
     }
 }
-

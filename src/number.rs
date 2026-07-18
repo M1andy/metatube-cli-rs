@@ -20,9 +20,8 @@ static MAKER_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static FC2_PREFIX_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(?i)\s*(FC2[-_]?PPV)[-_]").unwrap());
-static SUFFIX_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)([-_](c|uc|ch|cd\d{1,2})|hhb\d*|ch|A|B|C|D)\s*$").unwrap()
-});
+static SUFFIX_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)([-_](c|uc|ch|cd\d{1,2})|hhb\d*|ch|A|B|C|D)\s*$").unwrap());
 static UNCENSORED_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(?i)(\d{4,6}[-_]\d{2,3}|(cz|gedo|k|n|kb|se)\d{2,4}|(heyzo|xxx-av|heydouga|kin8)[-_].+)|([hc]0930|h4610|av9898|1000giri)[-_][a-z\d]+$").unwrap()
 });
@@ -150,7 +149,10 @@ mod tests {
             ("xxx-av-1789-C.mp4", "xxx-av-1789"),
             ("xxx-av-1789.mp4", "xxx-av-1789"),
             // --- Chinese / Japanese text ---
-            ("[HND-620] 絶対にナマで連射させてくれる連続中出しソープ_あいだ飛鳥.mp4", "HND-620"),
+            (
+                "[HND-620] 絶対にナマで連射させてくれる連続中出しソープ_あいだ飛鳥.mp4",
+                "HND-620",
+            ),
             ("133ARA-030你好.mp4", "133ARA-030"),
             ("259LUXU-1773中国人.mp4", "259LUXU-1773"),
             // --- hhb suffix ---

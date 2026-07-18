@@ -38,7 +38,9 @@ pub async fn run(config: &Config) -> anyhow::Result<()> {
         let pb = ProgressBar::new(total as u64);
         pb.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
+                )
                 .unwrap()
                 .progress_chars("#>-"),
         );
@@ -56,13 +58,7 @@ pub async fn run(config: &Config) -> anyhow::Result<()> {
 
         handles.push(tokio::spawn(async move {
             let _permit = sem.acquire().await.expect("semaphore shouldn't close");
-            let result = process_one(
-                client.clone(),
-                &jav_output,
-                dry_run,
-                &video,
-            )
-            .await;
+            let result = process_one(client.clone(), &jav_output, dry_run, &video).await;
             pb.inc(1);
             (filename, result)
         }));
@@ -78,7 +74,13 @@ pub async fn run(config: &Config) -> anyhow::Result<()> {
         match &result {
             Ok(Some(dest)) => {
                 if dry_run {
-                    info!("[{}/{}] [预览] {} → {}", idx, total, filename, dest.display());
+                    info!(
+                        "[{}/{}] [预览] {} → {}",
+                        idx,
+                        total,
+                        filename,
+                        dest.display()
+                    );
                 } else {
                     info!("[{}/{}] ✓ {} → {}", idx, total, filename, dest.display());
                 }

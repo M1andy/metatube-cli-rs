@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 use tracing::{debug, warn};
 
-pub(crate) const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mkv", "avi", "wmv", "flv", "ts", "mov", "webm"];
+pub(crate) const VIDEO_EXTENSIONS: &[&str] =
+    &["mp4", "mkv", "avi", "wmv", "flv", "ts", "mov", "webm"];
 
 #[derive(Debug, Clone)]
 pub struct VideoFile {
