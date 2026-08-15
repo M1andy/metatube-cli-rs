@@ -74,6 +74,10 @@ struct RawConfig {
     /// Disable progress bar even if terminal is interactive
     #[arg(long)]
     no_progress: bool,
+
+    /// Disable actor name normalization via the SDK (enabled by default)
+    #[arg(long)]
+    no_actor_name_normalization: bool,
 }
 
 /// config.toml structure — all fields optional.
@@ -91,6 +95,7 @@ struct ConfigFile {
     concurrency: Option<usize>,
     dry_run: Option<bool>,
     no_progress: Option<bool>,
+    actor_name_normalization: Option<bool>,
 }
 
 /// Final merged config — all required fields resolved.
@@ -109,6 +114,7 @@ pub struct Config {
     pub dry_run: bool,
     #[allow(dead_code)]
     pub no_progress: bool,
+    pub actor_name_normalization: bool,
 }
 
 impl Config {
@@ -204,6 +210,11 @@ impl Config {
             dry_run: raw.dry_run || file.as_ref().and_then(|f| f.dry_run).unwrap_or(false),
             no_progress: raw.no_progress
                 || file.as_ref().and_then(|f| f.no_progress).unwrap_or(false),
+            actor_name_normalization: !raw.no_actor_name_normalization
+                && file
+                    .as_ref()
+                    .and_then(|f| f.actor_name_normalization)
+                    .unwrap_or(true),
         })
     }
 
@@ -314,6 +325,7 @@ mod tests {
             concurrency: 4,
             dry_run: false,
             no_progress: false,
+            actor_name_normalization: true,
         };
         assert_eq!(config.min_size_bytes(), 300 * 1024 * 1024);
 
@@ -356,9 +368,9 @@ no_progress = true
         assert_eq!(cf.mode.unwrap(), "cron");
         assert_eq!(cf.cron.unwrap(), "0 */6 * * *");
         assert_eq!(cf.concurrency.unwrap(), 8);
-        assert_eq!(cf.dry_run.unwrap(), true);
+        assert!(cf.dry_run.unwrap());
         assert_eq!(cf.min_size_mb.unwrap(), 100);
-        assert_eq!(cf.no_progress.unwrap(), true);
+        assert!(cf.no_progress.unwrap());
     }
 
     #[test]
@@ -367,6 +379,20 @@ no_progress = true
         assert!(cf.mode.is_none());
         assert!(cf.jav_download.is_none());
         assert!(cf.cron.is_none());
+    }
+
+    #[test]
+    fn test_config_file_deserialize_actor_name_normalization() {
+        let toml_str = r#"
+jav_download = "/tmp/dl"
+jav_output = "/tmp/out"
+actor_name_normalization = false
+"#;
+        let cf: ConfigFile = toml::from_str(toml_str).unwrap();
+        assert_eq!(cf.actor_name_normalization, Some(false));
+
+        let cf: ConfigFile = toml::from_str("jav_download = \"/tmp/dl\"\n").unwrap();
+        assert_eq!(cf.actor_name_normalization, None);
     }
 
     #[test]

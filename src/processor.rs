@@ -253,6 +253,7 @@ pub async fn run(config: &Config) -> anyhow::Result<()> {
     };
 
     let dry_run = config.dry_run;
+    let normalize_actors = config.actor_name_normalization;
     let mut handles = Vec::new();
     for video in videos {
         let client = client.clone();
@@ -263,7 +264,14 @@ pub async fn run(config: &Config) -> anyhow::Result<()> {
 
         handles.push(tokio::spawn(async move {
             let _permit = sem.acquire().await.expect("semaphore shouldn't close");
-            let result = process_one(client.clone(), &jav_output, dry_run, &video).await;
+            let result = process_one(
+                client.clone(),
+                &jav_output,
+                dry_run,
+                normalize_actors,
+                &video,
+            )
+            .await;
             pb.inc(1);
             (filename, result)
         }));
@@ -355,6 +363,7 @@ pub async fn process_one(
     client: Arc<Client>,
     jav_output: &Path,
     dry_run: bool,
+    normalize_actors: bool,
     video: &VideoFile,
 ) -> anyhow::Result<Option<PathBuf>> {
     let id = number::trim(&video.filename);
@@ -376,7 +385,7 @@ pub async fn process_one(
 
     let movie_number = movie_info.number.clone();
 
-    let actresses = normalize_actresses(&client, &movie_info.actors).await;
+    let actresses = normalize_actresses(&client, &movie_info.actors, normalize_actors).await;
 
     if actresses.is_empty() {
         warn!("⚠ {} — 未找到演员", movie_number);
@@ -417,23 +426,17 @@ pub async fn process_one(
     Ok(Some(dest))
 }
 
-async fn normalize_actresses(client: &Client, actors: &[String]) -> Vec<String> {
+async fn normalize_actresses(client: &Client, actors: &[String], enabled: bool) -> Vec<String> {
+    if !enabled {
+        debug!("演员标准化已关闭，使用原始名称");
+        return actors.to_vec();
+    }
+
     let handles: Vec<_> = actors
         .iter()
         .map(|actress| {
             let actress = actress.clone();
-            async move {
-                match client.get_gfriends_actor(&actress).await {
-                    Ok(info) => {
-                        debug!("→ 演员标准化: {} → {}", actress, info.name);
-                        info.name
-                    }
-                    Err(_) => {
-                        warn!("→ 演员未标准化: {}, 使用原始名称", actress);
-                        actress
-                    }
-                }
-            }
+            async move { client.normalize_actor_name(&actress).await }
         })
         .collect();
 

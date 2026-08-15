@@ -19,6 +19,7 @@ pub async fn run_watch(config: &Config) -> anyhow::Result<()> {
     )?);
     let jav_output = config.jav_output.clone();
     let dry_run = config.dry_run;
+    let normalize_actors = config.actor_name_normalization;
     let min_size = config.min_size_bytes();
     let watch_dir = config.jav_download.clone();
 
@@ -168,7 +169,10 @@ pub async fn run_watch(config: &Config) -> anyhow::Result<()> {
                             filename,
                         };
 
-                        if let Err(e) = process_one(client, &jav_output, dry_run, &video).await {
+                        if let Err(e) =
+                            process_one(client, &jav_output, dry_run, normalize_actors, &video)
+                                .await
+                        {
                             error!("✗ 文件处理失败: {} — {:#}", video.filename, e);
                         }
                     });

@@ -147,10 +147,7 @@ mod tests {
 
     #[test]
     fn test_error_type() {
-        assert_eq!(
-            Error::Io(std::io::Error::new(std::io::ErrorKind::Other, "")).error_type(),
-            "Io"
-        );
+        assert_eq!(Error::Io(std::io::Error::other("")).error_type(), "Io");
         assert_eq!(Error::ClientInit("x".into()).error_type(), "ClientInit");
         assert_eq!(
             Error::Api {
@@ -234,11 +231,7 @@ mod tests {
 
     #[test]
     fn test_is_retryable_io_nospace() {
-        assert!(Error::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "no space left on device"
-        ))
-        .is_retryable());
+        assert!(Error::Io(std::io::Error::other("no space left on device")).is_retryable());
     }
 
     #[test]

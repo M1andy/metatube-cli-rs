@@ -3,6 +3,8 @@
 use crate::error::Error;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::Deserialize;
+use std::collections::HashMap;
+use std::sync::Mutex;
 use tracing::{debug, error, instrument, warn};
 
 #[derive(Debug, Deserialize)]
@@ -73,10 +75,27 @@ pub struct ActorInfo {
     pub images: Vec<String>,
 }
 
+/// Mirrors `model.ActorSearchResult`.
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+pub struct ActorSearchResult {
+    pub id: String,
+    pub name: String,
+    pub provider: String,
+    #[serde(default)]
+    pub homepage: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default)]
+    pub images: Vec<String>,
+}
+
 pub struct Client {
     inner: reqwest::Client,
     base_url: String,
     token: Option<String>,
+    /// Per-process cache of resolved actress names (original → normalized).
+    actor_cache: Mutex<HashMap<String, String>>,
 }
 
 impl Client {
@@ -100,6 +119,7 @@ impl Client {
             inner,
             base_url: base_url.trim_end_matches('/').to_string(),
             token,
+            actor_cache: Mutex::new(HashMap::new()),
         })
     }
 
@@ -204,6 +224,63 @@ impl Client {
         let path = format!("/v1/actors/gfriends/{}", urlencoding::encode(name));
         // trace only - too verbose for debug
         self.get_data(&path).await
+    }
+
+    /// Search actors by name, asking the server to apply the SDK's
+    /// actor name normalization for this request
+    /// (`is_actor_name_normalization=true`).
+    #[instrument(skip(self), fields(keyword = %keyword))]
+    pub async fn search_actor(&self, keyword: &str) -> Result<Vec<ActorSearchResult>, Error> {
+        let path = format!(
+            "/v1/actors/search?q={}&fallback=true&is_actor_name_normalization=true",
+            urlencoding::encode(keyword)
+        );
+        debug!("→ 搜索演员: {}", keyword);
+        self.get_data(&path).await
+    }
+
+    /// Resolve an actress name to her canonical stage name via the
+    /// SDK's actor name normalization: exact gfriends match first
+    /// (cheap, canonical by construction), then a full actor search
+    /// whose results are normalized server-side (alias → gfriends
+    /// canonical name > Japanese alias > format-normalized name).
+    /// Falls back to the original name when both lookups fail.
+    #[instrument(skip(self), fields(name = %name))]
+    pub async fn normalize_actor_name(&self, name: &str) -> String {
+        if let Some(cached) = self.cached_actor_name(name) {
+            debug!("→ 演员标准化(缓存): {}", name);
+            return cached;
+        }
+
+        if let Ok(info) = self.get_gfriends_actor(name).await {
+            debug!("→ 演员标准化(gfriends): {} → {}", name, info.name);
+            self.cache_actor_name(name, &info.name);
+            return info.name;
+        }
+
+        match self.search_actor(name).await {
+            Ok(results) if !results.is_empty() => {
+                let normalized = results[0].name.clone();
+                debug!("→ 演员标准化(SDK): {} → {}", name, normalized);
+                self.cache_actor_name(name, &normalized);
+                normalized
+            }
+            _ => {
+                warn!("→ 演员未标准化: {}, 使用原始名称", name);
+                name.to_string()
+            }
+        }
+    }
+
+    /// Cache lookup helper — never blocks, never panics on a poisoned lock.
+    fn cached_actor_name(&self, name: &str) -> Option<String> {
+        self.actor_cache.lock().ok()?.get(name).cloned()
+    }
+
+    fn cache_actor_name(&self, name: &str, normalized: &str) {
+        if let Ok(mut cache) = self.actor_cache.lock() {
+            cache.insert(name.to_string(), normalized.to_string());
+        }
     }
 }
 
@@ -345,6 +422,38 @@ mod tests {
         let actor: ActorInfo = serde_json::from_str(json).unwrap();
         assert!(actor.aliases.is_empty());
         assert!(actor.images.is_empty());
+    }
+
+    #[test]
+    fn test_deserialize_actor_search_result_full() {
+        let json = r#"{
+            "id": "1038854",
+            "name": "深田えいみ",
+            "provider": "av-league",
+            "homepage": "https://www.av-league.com/actor/1038854",
+            "aliases": ["Eimi Fukada", "ふかだえいみ"],
+            "images": ["https://img.example.com/1.jpg"]
+        }"#;
+        let result: ActorSearchResult = serde_json::from_str(json).unwrap();
+        assert_eq!(result.id, "1038854");
+        assert_eq!(result.name, "深田えいみ");
+        assert_eq!(result.provider, "av-league");
+        assert_eq!(result.aliases.len(), 2);
+        assert_eq!(result.images.len(), 1);
+    }
+
+    #[test]
+    fn test_deserialize_actor_search_result_minimal() {
+        let json = r#"{
+            "id": "1038854",
+            "name": "深田えいみ",
+            "provider": "gfriends"
+        }"#;
+        let result: ActorSearchResult = serde_json::from_str(json).unwrap();
+        assert_eq!(result.name, "深田えいみ");
+        assert_eq!(result.homepage, "");
+        assert!(result.aliases.is_empty());
+        assert!(result.images.is_empty());
     }
 
     #[test]
