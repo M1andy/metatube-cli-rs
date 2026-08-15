@@ -1,16 +1,22 @@
 use crate::config::Config;
 use crate::processor;
-use chrono::Utc;
+use crate::tui::event::{AppEvent, Reporter};
+use chrono::{DateTime, Local, Utc};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
-pub async fn run_scheduled(config: &Config, cron_expr: &str) -> anyhow::Result<()> {
+pub async fn run_scheduled(
+    config: &Config,
+    cron_expr: &str,
+    reporter: Arc<dyn Reporter>,
+    quit_flag: &AtomicBool,
+) -> anyhow::Result<()> {
     let schedule = croner::Cron::new(cron_expr).parse()?;
 
     let running = Arc::new(AtomicBool::new(false));
 
-    run_once(config).await;
+    run_once(config, reporter.clone()).await;
 
     loop {
         let next = match schedule.find_next_occurrence(&Utc::now(), false) {
@@ -24,11 +30,21 @@ pub async fn run_scheduled(config: &Config, cron_expr: &str) -> anyhow::Result<(
 
         let delay = (next - Utc::now()).num_seconds().max(0) as u64;
         info!("→ 下次执行: {}", format_duration(delay));
+        reporter.emit(AppEvent::NextSchedule {
+            at: DateTime::<Local>::from(next),
+        });
 
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 info!("收到终止信号，调度器退出");
                 break;
+            }
+            // TUI 按键退出（raw mode 下 Ctrl+C 不产生信号，经 quit_flag 传递）
+            _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {
+                if quit_flag.load(Ordering::SeqCst) {
+                    info!("收到退出请求，调度器退出");
+                    break;
+                }
             }
             _ = tokio::time::sleep(std::time::Duration::from_secs(delay)) => {
                 if running.load(Ordering::SeqCst) {
@@ -36,7 +52,7 @@ pub async fn run_scheduled(config: &Config, cron_expr: &str) -> anyhow::Result<(
                     continue;
                 }
                 running.store(true, Ordering::SeqCst);
-                run_once(config).await;
+                run_once(config, reporter.clone()).await;
                 running.store(false, Ordering::SeqCst);
             }
         }
@@ -55,8 +71,8 @@ fn format_duration(seconds: u64) -> String {
     }
 }
 
-async fn run_once(config: &Config) {
-    match processor::run(config).await {
+async fn run_once(config: &Config, reporter: Arc<dyn Reporter>) {
+    match processor::run(config, reporter).await {
         Ok(()) => info!("✓ 本轮扫描完成"),
         Err(e) => error!("✗ 扫描执行失败，将在下次计划重试: {:#}", e),
     }

@@ -17,6 +17,16 @@ pub enum RunMode {
     Watch,
 }
 
+impl RunMode {
+    pub fn label(&self) -> &'static str {
+        match self {
+            RunMode::Once => "单次扫描",
+            RunMode::Cron => "定时执行",
+            RunMode::Watch => "文件监视",
+        }
+    }
+}
+
 /// CLI args (all optional during initial parse, validated after merge).
 #[derive(Parser, Debug)]
 #[command(name = "metatube-cli-rs")]
@@ -71,7 +81,11 @@ struct RawConfig {
     #[arg(long, env = "JAV_FAILED", value_hint = clap::ValueHint::DirPath)]
     jav_failed: Option<PathBuf>,
 
-    /// Disable progress bar even if terminal is interactive
+    /// Disable the full-screen TUI even if terminal is interactive
+    #[arg(long)]
+    no_tui: bool,
+
+    /// Disable the full-screen TUI (legacy alias of --no-tui)
     #[arg(long)]
     no_progress: bool,
 
@@ -94,6 +108,7 @@ struct ConfigFile {
     cron: Option<String>,
     concurrency: Option<usize>,
     dry_run: Option<bool>,
+    no_tui: Option<bool>,
     no_progress: Option<bool>,
     actor_name_normalization: Option<bool>,
 }
@@ -112,8 +127,7 @@ pub struct Config {
     pub cron_expr: Option<String>,
     pub concurrency: usize,
     pub dry_run: bool,
-    #[allow(dead_code)]
-    pub no_progress: bool,
+    pub no_tui: bool,
     pub actor_name_normalization: bool,
 }
 
@@ -208,8 +222,12 @@ impl Config {
                 .or_else(|| file.as_ref().and_then(|f| f.concurrency))
                 .unwrap_or(4),
             dry_run: raw.dry_run || file.as_ref().and_then(|f| f.dry_run).unwrap_or(false),
-            no_progress: raw.no_progress
-                || file.as_ref().and_then(|f| f.no_progress).unwrap_or(false),
+            no_tui: raw.no_tui
+                || raw.no_progress
+                || file
+                    .as_ref()
+                    .and_then(|f| f.no_tui.or(f.no_progress))
+                    .unwrap_or(false),
             actor_name_normalization: !raw.no_actor_name_normalization
                 && file
                     .as_ref()
@@ -324,7 +342,7 @@ mod tests {
             cron_expr: None,
             concurrency: 4,
             dry_run: false,
-            no_progress: false,
+            no_tui: false,
             actor_name_normalization: true,
         };
         assert_eq!(config.min_size_bytes(), 300 * 1024 * 1024);
@@ -362,7 +380,7 @@ jav_output = "/tmp/out"
 concurrency = 8
 dry_run = true
 min_size_mb = 100
-no_progress = true
+no_tui = true
 "#;
         let cf: ConfigFile = toml::from_str(toml_str).unwrap();
         assert_eq!(cf.mode.unwrap(), "cron");
@@ -370,7 +388,26 @@ no_progress = true
         assert_eq!(cf.concurrency.unwrap(), 8);
         assert!(cf.dry_run.unwrap());
         assert_eq!(cf.min_size_mb.unwrap(), 100);
+        assert!(cf.no_tui.unwrap());
+    }
+
+    #[test]
+    fn test_config_file_deserialize_legacy_no_progress() {
+        let toml_str = r#"
+jav_download = "/tmp/dl"
+jav_output = "/tmp/out"
+no_progress = true
+"#;
+        let cf: ConfigFile = toml::from_str(toml_str).unwrap();
         assert!(cf.no_progress.unwrap());
+        assert!(cf.no_tui.is_none());
+    }
+
+    #[test]
+    fn test_run_mode_labels() {
+        assert_eq!(RunMode::Once.label(), "单次扫描");
+        assert_eq!(RunMode::Cron.label(), "定时执行");
+        assert_eq!(RunMode::Watch.label(), "文件监视");
     }
 
     #[test]

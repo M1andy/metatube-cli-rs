@@ -3,9 +3,9 @@ use crate::config::Config;
 use crate::error::Error;
 use crate::number;
 use crate::scanner::{scan, VideoFile};
+use crate::tui::event::{AppEvent, FileStatus, Reporter, Stage};
 use chrono::Utc;
 use futures::future::join_all;
-use indicatif::{ProgressBar, ProgressStyle};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -209,7 +209,7 @@ fn make_subdir_name(filename: &str, number: Option<&str>) -> String {
     format!("{:016x}", hasher.finish())
 }
 
-pub async fn run(config: &Config) -> anyhow::Result<()> {
+pub async fn run(config: &Config, reporter: Arc<dyn Reporter>) -> anyhow::Result<()> {
     let client = Arc::new(Client::new(
         config.server_url.clone(),
         config.token.clone(),
@@ -222,12 +222,15 @@ pub async fn run(config: &Config) -> anyhow::Result<()> {
         info!("→ 从失败目录回迁 {} 个可重试文件", retry_videos.len());
     }
 
+    reporter.emit(AppEvent::ScanStart);
     let mut videos = scan(
         &config.jav_download.to_string_lossy(),
         config.min_size_bytes(),
+        reporter.clone(),
     )
     .await;
     videos.extend(retry_videos);
+    reporter.emit(AppEvent::ScanDone);
 
     if videos.is_empty() {
         info!("✓ 在 {} 中没有找到视频文件", config.jav_download.display());
@@ -236,21 +239,7 @@ pub async fn run(config: &Config) -> anyhow::Result<()> {
 
     let total = videos.len();
     info!("→ 找到 {} 个视频文件，开始处理...", total);
-
-    let pb = if config.no_progress {
-        ProgressBar::hidden()
-    } else {
-        let pb = ProgressBar::new(total as u64);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template(
-                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
-                )
-                .unwrap()
-                .progress_chars("#>-"),
-        );
-        pb
-    };
+    reporter.emit(AppEvent::RoundStart { total });
 
     let dry_run = config.dry_run;
     let normalize_actors = config.actor_name_normalization;
@@ -259,20 +248,32 @@ pub async fn run(config: &Config) -> anyhow::Result<()> {
         let client = client.clone();
         let sem = semaphore.clone();
         let jav_output = config.jav_output.clone();
-        let pb = pb.clone();
+        let reporter = reporter.clone();
         let filename = video.filename.clone();
 
         handles.push(tokio::spawn(async move {
             let _permit = sem.acquire().await.expect("semaphore shouldn't close");
+            reporter.emit(AppEvent::FileStart {
+                filename: filename.clone(),
+            });
             let result = process_one(
                 client.clone(),
                 &jav_output,
                 dry_run,
                 normalize_actors,
                 &video,
+                reporter.as_ref(),
             )
             .await;
-            pb.inc(1);
+            let status = match &result {
+                Ok(Some(_)) => FileStatus::Success,
+                Ok(None) => FileStatus::Skipped,
+                Err(_) => FileStatus::Failed,
+            };
+            reporter.emit(AppEvent::FileDone {
+                filename: filename.clone(),
+                status,
+            });
             (filename, result)
         }));
     }
@@ -344,7 +345,11 @@ pub async fn run(config: &Config) -> anyhow::Result<()> {
         }
     }
 
-    pb.finish_and_clear();
+    reporter.emit(AppEvent::RoundDone {
+        success,
+        skipped,
+        failed,
+    });
 
     info!("══════════════════════════════════════");
     info!(
@@ -365,6 +370,7 @@ pub async fn process_one(
     dry_run: bool,
     normalize_actors: bool,
     video: &VideoFile,
+    reporter: &dyn Reporter,
 ) -> anyhow::Result<Option<PathBuf>> {
     let id = number::trim(&video.filename);
     if id.is_empty() {
@@ -373,18 +379,30 @@ pub async fn process_one(
     }
     debug!("→ 识别番号 \"{}\" ← \"{}\"", id, video.filename);
 
+    reporter.emit(AppEvent::FileStage {
+        filename: video.filename.clone(),
+        stage: Stage::Search,
+    });
     let search_result = client.search_movie(&id).await?;
     debug!(
         "→ 找到: {} ({}) 来源: {}",
         search_result.number, search_result.title, search_result.provider
     );
 
+    reporter.emit(AppEvent::FileStage {
+        filename: video.filename.clone(),
+        stage: Stage::Detail,
+    });
     let movie_info = client
         .get_movie_info(&search_result.provider, &search_result.id)
         .await?;
 
     let movie_number = movie_info.number.clone();
 
+    reporter.emit(AppEvent::FileStage {
+        filename: video.filename.clone(),
+        stage: Stage::Normalize,
+    });
     let actresses = normalize_actresses(&client, &movie_info.actors, normalize_actors).await;
 
     if actresses.is_empty() {
@@ -414,6 +432,10 @@ pub async fn process_one(
         return Ok(Some(dest));
     }
 
+    reporter.emit(AppEvent::FileStage {
+        filename: video.filename.clone(),
+        stage: Stage::Move,
+    });
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(Error::Io)?;
     }

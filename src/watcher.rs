@@ -4,6 +4,7 @@ use crate::api::Client;
 use crate::config::Config;
 use crate::processor::process_one;
 use crate::scanner::{VideoFile, VIDEO_EXTENSIONS};
+use crate::tui::event::{AppEvent, FileStatus, Reporter};
 use notify_debouncer_mini::{new_debouncer, DebouncedEvent};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -11,7 +12,11 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 use tracing::{error, info, warn};
 
-pub async fn run_watch(config: &Config) -> anyhow::Result<()> {
+pub async fn run_watch(
+    config: &Config,
+    reporter: Arc<dyn Reporter>,
+    quit_flag: &AtomicBool,
+) -> anyhow::Result<()> {
     let client = Arc::new(Client::new(
         config.server_url.clone(),
         config.token.clone(),
@@ -95,6 +100,9 @@ pub async fn run_watch(config: &Config) -> anyhow::Result<()> {
     }
 
     info!("→ 等待新视频文件...");
+    reporter.emit(AppEvent::WatchReady {
+        path: config.jav_download.clone(),
+    });
 
     loop {
         tokio::select! {
@@ -102,6 +110,14 @@ pub async fn run_watch(config: &Config) -> anyhow::Result<()> {
                 info!("收到终止信号，关闭文件监视...");
                 stop_flag.store(true, Ordering::SeqCst);
                 break;
+            }
+            // TUI 按键退出（raw mode 下 Ctrl+C 不产生信号，经 quit_flag 传递）
+            _ = tokio::time::sleep(Duration::from_millis(200)) => {
+                if quit_flag.load(Ordering::SeqCst) {
+                    info!("收到退出请求，关闭文件监视...");
+                    stop_flag.store(true, Ordering::SeqCst);
+                    break;
+                }
             }
             events = event_rx.recv() => {
                 let events = match events {
@@ -147,6 +163,7 @@ pub async fn run_watch(config: &Config) -> anyhow::Result<()> {
                     // block the event loop from receiving new events.
                     let client = client.clone();
                     let jav_output = jav_output.clone();
+                    let reporter = reporter.clone();
                     tokio::spawn(async move {
                         let path_for_check = path.clone();
                         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -166,13 +183,32 @@ pub async fn run_watch(config: &Config) -> anyhow::Result<()> {
                         let video = VideoFile {
                             path: path.clone(),
                             size: initial_size,
-                            filename,
+                            filename: filename.clone(),
                         };
 
-                        if let Err(e) =
-                            process_one(client, &jav_output, dry_run, normalize_actors, &video)
-                                .await
-                        {
+                        reporter.emit(AppEvent::FileStart {
+                            filename: filename.clone(),
+                        });
+                        let result = process_one(
+                            client,
+                            &jav_output,
+                            dry_run,
+                            normalize_actors,
+                            &video,
+                            reporter.as_ref(),
+                        )
+                        .await;
+                        let status = match &result {
+                            Ok(Some(_)) => FileStatus::Success,
+                            Ok(None) => FileStatus::Skipped,
+                            Err(_) => FileStatus::Failed,
+                        };
+                        reporter.emit(AppEvent::FileDone {
+                            filename: filename.clone(),
+                            status,
+                        });
+
+                        if let Err(e) = result {
                             error!("✗ 文件处理失败: {} — {:#}", video.filename, e);
                         }
                     });

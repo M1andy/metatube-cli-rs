@@ -1,8 +1,65 @@
 {
   "project": "metatube-cli-rs",
   "version": "0.1.0",
-  "updated_at": "2026-07-19",
+  "updated_at": "2026-08-15",
   "todos": [
+    {
+      "id": "feat-002",
+      "title": "ratatui 全屏 TUI 进度界面",
+      "status": "completed",
+      "priority": "high",
+      "description": "用 ratatui 0.30 + crossterm 0.29 替换 indicatif 行内进度条，构建全屏 alt-screen TUI：Unicode 平滑块进度条（Gauge use_unicode，八分块 █▉▊▋▌▍▎▏）、盲文 spinner 动画（⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏）、实时日志面板与统计。退出/完成后 alt-screen 整体消失，终端历史零残留。\n\n架构：双线程 + mpsc 事件通道。业务侧通过 Reporter trait（ChannelReporter try_send 非阻塞，通道满丢弃）上报 AppEvent；TUI 渲染线程独占终端，100ms tick 轮询重绘。tracing 日志经 TuiLogLayer 桥接进日志面板（500 条环形缓冲）。\n\n覆盖三种模式：once/cron 轮次进度 + watch 模式活动任务列表 + 扫描阶段 spinner。非 TTY（管道/CI）或 --no-tui 自动回退纯文本日志模式；--no-progress 保留为兼容别名。panic hook 恢复终端，q/Esc/Ctrl+C 优雅退出（raw mode 下经 quit_flag AtomicBool 传递给业务循环）。\n\n所有 116 个测试通过（新增 29 个：事件通道、状态机、TestBackend 渲染断言、扫描进度上报），clippy 零警告。",
+      "subtasks": [
+        {
+          "id": "feat-002-1",
+          "title": "事件模型与 Reporter 抽象",
+          "status": "completed",
+          "description": "src/tui/event.rs: AppEvent 枚举（Scan/Round/FileStart/FileStage/FileDone/RoundDone/NextSchedule/WatchReady/Log/Shutdown）+ Reporter trait + NoopReporter/ChannelReporter"
+        },
+        {
+          "id": "feat-002-2",
+          "title": "TUI 状态机",
+          "status": "completed",
+          "description": "src/tui/app.rs: App 消费事件维护状态（轮次进度、活动任务、统计、日志环形缓冲、ETA 估算、滚动偏移）"
+        },
+        {
+          "id": "feat-002-3",
+          "title": "渲染布局",
+          "status": "completed",
+          "description": "src/tui/ui.rs: 头部信息 / Gauge Unicode 进度条 / 任务+统计双栏 / 日志面板（级别着色）/ 状态栏；圆角边框"
+        },
+        {
+          "id": "feat-002-4",
+          "title": "终端生命周期与渲染线程",
+          "status": "completed",
+          "description": "src/tui/mod.rs: ratatui::try_init/try_restore + panic hook；渲染循环 100ms tick + crossterm 键盘（q/Esc/Ctrl+C 退出，↑↓ 滚动日志）"
+        },
+        {
+          "id": "feat-002-5",
+          "title": "tracing 日志桥接",
+          "status": "completed",
+          "description": "src/logging.rs: TuiLogLayer 自定义 Layer 提取 level+message 转发 AppEvent::Log；init_plain/init_tui 双模式初始化；CleanFormat 保留"
+        },
+        {
+          "id": "feat-002-6",
+          "title": "业务管线接入 Reporter",
+          "status": "completed",
+          "description": "processor::run/process_one 上报扫描/阶段/完成事件；scanner 递归上报目录进度；watcher 每文件 FileStart→FileDone + quit_flag 退出；scheduler NextSchedule 事件；移除全部 indicatif 代码"
+        },
+        {
+          "id": "feat-002-7",
+          "title": "no_tui 配置开关",
+          "status": "completed",
+          "description": "config.rs: --no-tui（CLI/env/config.toml 四级合并），no_progress 保留为兼容别名等价 no_tui"
+        },
+        {
+          "id": "feat-002-8",
+          "title": "main 编排与回退",
+          "status": "completed",
+          "description": "main.rs: 先加载配置再初始化日志（TUI 决策决定日志去向）；stdout+stderr TTY 检测；TUI setup 失败回退纯文本；once 模式完成后保持界面（汇总 + 日志可滚动）等待用户手动按 q/Esc 退出，cron/watch 业务退出后自动关闭 TUI；三种模式结果统一捕获，任何路径都先完成 TUI 收尾再返回"
+        }
+      ]
+    },
     {
       "id": "fix-001",
       "title": "修复 Windows 下 watch 模式不可用",
