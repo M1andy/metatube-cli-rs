@@ -351,7 +351,7 @@ mod tests {
             .buffer()
             .content
             .iter()
-            .for_each(|c| out.push_str(&c.symbol().to_string()));
+            .for_each(|c| out.push_str(c.symbol()));
         out
     }
 
