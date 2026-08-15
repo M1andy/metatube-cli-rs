@@ -81,6 +81,10 @@ struct RawConfig {
     #[arg(long, env = "JAV_FAILED", value_hint = clap::ValueHint::DirPath)]
     jav_failed: Option<PathBuf>,
 
+    /// Subdirectory under jav_output for videos with no scraped actress (default: 1-未知演员)
+    #[arg(long, env = "UNKNOWN_ACTRESS_DIR")]
+    unknown_actress_dir: Option<String>,
+
     /// Disable the full-screen TUI even if terminal is interactive
     #[arg(long)]
     no_tui: bool,
@@ -101,6 +105,7 @@ struct ConfigFile {
     jav_download: Option<String>,
     jav_output: Option<String>,
     jav_failed: Option<String>,
+    unknown_actress_dir: Option<String>,
     server_url: Option<String>,
     token: Option<String>,
     proxy: Option<String>,
@@ -120,6 +125,7 @@ pub struct Config {
     pub jav_download: PathBuf,
     pub jav_output: PathBuf,
     pub jav_failed: PathBuf,
+    pub unknown_actress_dir: String,
     pub server_url: String,
     pub token: Option<String>,
     pub proxy: Option<String>,
@@ -197,11 +203,18 @@ impl Config {
                     .join("JAV_failed")
             });
 
+        // Merge unknown_actress_dir: CLI > env (UNKNOWN_ACTRESS_DIR) > config.toml > default
+        let unknown_actress_dir = raw
+            .unknown_actress_dir
+            .or_else(|| file.as_ref().and_then(|f| f.unknown_actress_dir.clone()))
+            .unwrap_or_else(|| "1-未知演员".into());
+
         Ok(Self {
             mode,
             jav_download,
             jav_output,
             jav_failed,
+            unknown_actress_dir,
             server_url: raw
                 .server_url
                 .or_else(|| file.as_ref().and_then(|f| f.server_url.clone()))
@@ -335,6 +348,7 @@ mod tests {
             jav_download: PathBuf::from("/tmp/dl"),
             jav_output: PathBuf::from("/tmp/out"),
             jav_failed: PathBuf::from("/tmp/JAV_failed"),
+            unknown_actress_dir: "1-未知演员".into(),
             server_url: "http://localhost".into(),
             token: None,
             proxy: None,
@@ -430,6 +444,20 @@ actor_name_normalization = false
 
         let cf: ConfigFile = toml::from_str("jav_download = \"/tmp/dl\"\n").unwrap();
         assert_eq!(cf.actor_name_normalization, None);
+    }
+
+    #[test]
+    fn test_config_file_deserialize_unknown_actress_dir() {
+        let toml_str = r#"
+jav_download = "/tmp/dl"
+jav_output = "/tmp/out"
+unknown_actress_dir = "2-待整理"
+"#;
+        let cf: ConfigFile = toml::from_str(toml_str).unwrap();
+        assert_eq!(cf.unknown_actress_dir.unwrap(), "2-待整理");
+
+        let cf: ConfigFile = toml::from_str("jav_download = \"/tmp/dl\"\n").unwrap();
+        assert_eq!(cf.unknown_actress_dir, None);
     }
 
     #[test]

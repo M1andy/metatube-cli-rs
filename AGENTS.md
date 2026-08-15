@@ -10,6 +10,7 @@
 - **番号识别**：从文件名中提取 JAV 番号（移植自 Go 版 `common/number/number.go`）
 - **演员标准化**：默认调用 SDK 艺名标准化（`/v1/actors/search?is_actor_name_normalization=true`），先做 Gfriends 精确匹配再做全数据源搜索，将演员别名统一为标准艺名；`actor_name_normalization = false` 或 `--no-actor-name-normalization` 可关闭
 - **无码/有码分类**：自动识别无码片商并在文件名添加 `UC` / `C` 后缀
+- **未知演员兜底**：刮削不到演员时，文件名标准化为 `{番号}-{UC|C}.{ext}` 并移动到 `{输出目录}/1-未知演员/{番号}/`（`unknown_actress_dir` 可配置）
 - **防重复处理**：定时模式下跳过仍在写入的文件
 
 ## 项目结构
@@ -114,6 +115,7 @@ cargo run -- --config config.test.toml
 - 最小文件大小：300 MB（`min_size_mb`）
 - 并发数：4
 - 运行模式：`once`
+- 未知演员目录：`1-未知演员`（`unknown_actress_dir`）
 
 ### 文件监视模式（watch）
 - 防抖时间 5 秒（`notify_debouncer_mini`）

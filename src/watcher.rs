@@ -25,6 +25,7 @@ pub async fn run_watch(
     let jav_output = config.jav_output.clone();
     let dry_run = config.dry_run;
     let normalize_actors = config.actor_name_normalization;
+    let unknown_actress_dir = config.unknown_actress_dir.clone();
     let min_size = config.min_size_bytes();
     let watch_dir = config.jav_download.clone();
 
@@ -163,6 +164,7 @@ pub async fn run_watch(
                     // block the event loop from receiving new events.
                     let client = client.clone();
                     let jav_output = jav_output.clone();
+                    let unknown_actress_dir = unknown_actress_dir.clone();
                     let reporter = reporter.clone();
                     tokio::spawn(async move {
                         let path_for_check = path.clone();
@@ -194,6 +196,7 @@ pub async fn run_watch(
                             &jav_output,
                             dry_run,
                             normalize_actors,
+                            &unknown_actress_dir,
                             &video,
                             reporter.as_ref(),
                         )

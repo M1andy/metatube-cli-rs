@@ -209,6 +209,30 @@ fn make_subdir_name(filename: &str, number: Option<&str>) -> String {
     format!("{:016x}", hasher.finish())
 }
 
+/// Group directory for a video: normalized actress names joined by ",",
+/// or the configured unknown-actress directory when none could be scraped.
+fn actress_group_dir(actresses: &[String], unknown_dir: &str) -> String {
+    if actresses.is_empty() {
+        unknown_dir.to_string()
+    } else {
+        actresses.join(",")
+    }
+}
+
+/// Standardized filename: `{number}-{UC|C}.{ext}`, extension falls back to mp4.
+fn standard_filename(movie_number: &str, original_filename: &str) -> String {
+    let suffix = if number::is_uncensored(movie_number) {
+        "UC"
+    } else {
+        "C"
+    };
+    let ext = Path::new(original_filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("mp4");
+    format!("{}-{}.{}", movie_number, suffix, ext)
+}
+
 pub async fn run(config: &Config, reporter: Arc<dyn Reporter>) -> anyhow::Result<()> {
     let client = Arc::new(Client::new(
         config.server_url.clone(),
@@ -243,6 +267,7 @@ pub async fn run(config: &Config, reporter: Arc<dyn Reporter>) -> anyhow::Result
 
     let dry_run = config.dry_run;
     let normalize_actors = config.actor_name_normalization;
+    let unknown_actress_dir = config.unknown_actress_dir.clone();
     let mut handles = Vec::new();
     for video in videos {
         let client = client.clone();
@@ -250,6 +275,7 @@ pub async fn run(config: &Config, reporter: Arc<dyn Reporter>) -> anyhow::Result
         let jav_output = config.jav_output.clone();
         let reporter = reporter.clone();
         let filename = video.filename.clone();
+        let unknown_actress_dir = unknown_actress_dir.clone();
 
         handles.push(tokio::spawn(async move {
             let _permit = sem.acquire().await.expect("semaphore shouldn't close");
@@ -261,6 +287,7 @@ pub async fn run(config: &Config, reporter: Arc<dyn Reporter>) -> anyhow::Result
                 &jav_output,
                 dry_run,
                 normalize_actors,
+                &unknown_actress_dir,
                 &video,
                 reporter.as_ref(),
             )
@@ -361,14 +388,15 @@ pub async fn run(config: &Config, reporter: Arc<dyn Reporter>) -> anyhow::Result
     Ok(())
 }
 
-/// Returns Ok(None) when the file was skipped (no actresses found).
-/// Returns Ok(Some(dest_path)) on success.
-/// Returns Err on failure.
+/// Returns Ok(Some(dest_path)) on success — videos with no scraped actress
+/// are renamed to the standard format and organized into the configured
+/// unknown-actress directory. Returns Err on failure.
 pub async fn process_one(
     client: Arc<Client>,
     jav_output: &Path,
     dry_run: bool,
     normalize_actors: bool,
+    unknown_actress_dir: &str,
     video: &VideoFile,
     reporter: &dyn Reporter,
 ) -> anyhow::Result<Option<PathBuf>> {
@@ -406,23 +434,11 @@ pub async fn process_one(
     let actresses = normalize_actresses(&client, &movie_info.actors, normalize_actors).await;
 
     if actresses.is_empty() {
-        warn!("⚠ {} — 未找到演员", movie_number);
-        return Ok(None);
+        warn!("⚠ {} — 未找到演员，归入未知演员目录", movie_number);
     }
 
-    let suffix = if number::is_uncensored(&movie_number) {
-        "UC"
-    } else {
-        "C"
-    };
-
-    let ext = Path::new(&video.filename)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("mp4");
-
-    let actress_dir = actresses.join(",");
-    let new_filename = format!("{}-{}.{}", movie_number, suffix, ext);
+    let new_filename = standard_filename(&movie_number, &video.filename);
+    let actress_dir = actress_group_dir(&actresses, unknown_actress_dir);
     let mut dest = PathBuf::from(jav_output);
     dest.push(&actress_dir);
     dest.push(&movie_number);
@@ -682,6 +698,47 @@ mod tests {
         assert_eq!(a, b);
         let c = make_subdir_name("different.mp4", None);
         assert_ne!(a, c);
+    }
+
+    #[test]
+    fn test_actress_group_dir_single() {
+        let actresses = ["深田えいみ".to_string()];
+        assert_eq!(actress_group_dir(&actresses, "1-未知演员"), "深田えいみ");
+    }
+
+    #[test]
+    fn test_actress_group_dir_multiple() {
+        let actresses = ["actress_a".to_string(), "actress_b".to_string()];
+        assert_eq!(
+            actress_group_dir(&actresses, "1-未知演员"),
+            "actress_a,actress_b"
+        );
+    }
+
+    #[test]
+    fn test_actress_group_dir_empty_falls_back_to_unknown() {
+        assert_eq!(actress_group_dir(&[], "1-未知演员"), "1-未知演员");
+    }
+
+    #[test]
+    fn test_standard_filename_censored() {
+        assert_eq!(
+            standard_filename("SSIS-123", "ssis00123.mp4"),
+            "SSIS-123-C.mp4"
+        );
+    }
+
+    #[test]
+    fn test_standard_filename_uncensored() {
+        assert_eq!(
+            standard_filename("HEYZO-1789", "heyzo-1789.wmv"),
+            "HEYZO-1789-UC.wmv"
+        );
+    }
+
+    #[test]
+    fn test_standard_filename_no_extension() {
+        assert_eq!(standard_filename("ABP-030", "ABP-030"), "ABP-030-C.mp4");
     }
 
     #[test]
