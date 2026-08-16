@@ -16,7 +16,7 @@ pub async fn run_scheduled(
 
     let running = Arc::new(AtomicBool::new(false));
 
-    run_once(config, reporter.clone()).await;
+    run_once(config, reporter.clone(), quit_flag).await;
 
     loop {
         let next = match schedule.find_next_occurrence(&Utc::now(), false) {
@@ -52,7 +52,7 @@ pub async fn run_scheduled(
                     continue;
                 }
                 running.store(true, Ordering::SeqCst);
-                run_once(config, reporter.clone()).await;
+                run_once(config, reporter.clone(), quit_flag).await;
                 running.store(false, Ordering::SeqCst);
             }
         }
@@ -71,8 +71,8 @@ fn format_duration(seconds: u64) -> String {
     }
 }
 
-async fn run_once(config: &Config, reporter: Arc<dyn Reporter>) {
-    match processor::run(config, reporter).await {
+async fn run_once(config: &Config, reporter: Arc<dyn Reporter>, quit_flag: &AtomicBool) {
+    match processor::run(config, reporter, quit_flag).await {
         Ok(()) => info!("✓ 本轮扫描完成"),
         Err(e) => error!("✗ 扫描执行失败，将在下次计划重试: {:#}", e),
     }

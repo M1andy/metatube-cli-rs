@@ -30,14 +30,17 @@ pub fn setup() -> std::io::Result<DefaultTerminal> {
 }
 
 /// TUI 渲染线程主循环。线程返回前恢复终端。
+#[allow(clippy::too_many_arguments)]
 pub fn render_loop(
     mut terminal: DefaultTerminal,
     rx: Receiver<AppEvent>,
     quit_flag: Arc<AtomicBool>,
     mode_label: &'static str,
     server_url: String,
+    dry_run: bool,
+    concurrency: usize,
 ) {
-    let mut app = App::new(mode_label, server_url);
+    let mut app = App::new(mode_label, server_url).with_meta(dry_run, concurrency);
 
     loop {
         // 批量消费业务事件，超时当作一次 tick
@@ -56,22 +59,46 @@ pub fn render_loop(
 
         // 键盘事件（非阻塞扫描，只处理按下）
         while crossterm::event::poll(Duration::ZERO).unwrap_or(false) {
-            if let Event::Key(key) = crossterm::event::read().unwrap_or(Event::Resize(0, 0)) {
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
-                let quit = matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
-                    || (key.code == KeyCode::Char('c')
-                        && key.modifiers.contains(KeyModifiers::CONTROL));
-                if quit {
+            let event = match crossterm::event::read() {
+                Ok(ev) => ev,
+                Err(e) => {
+                    // 终端事件流已损坏（如终端被关闭），无法继续渲染
+                    error!("读取键盘事件失败: {}", e);
                     app.exit = true;
-                    quit_flag.store(true, Ordering::SeqCst);
-                } else {
-                    match key.code {
-                        KeyCode::Up => app.scroll_logs_up(),
-                        KeyCode::Down => app.scroll_logs_down(),
-                        _ => {}
-                    }
+                    break;
+                }
+            };
+            let Event::Key(key) = event else {
+                continue;
+            };
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+
+            // 帮助浮层打开时：仅响应关闭浮层，其余按键不透传
+            if app.show_help {
+                if matches!(key.code, KeyCode::Char('?') | KeyCode::Esc) {
+                    app.show_help = false;
+                }
+                continue;
+            }
+
+            let quit = matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
+                || (key.code == KeyCode::Char('c')
+                    && key.modifiers.contains(KeyModifiers::CONTROL));
+            if quit {
+                app.exit = true;
+                quit_flag.store(true, Ordering::SeqCst);
+            } else {
+                match key.code {
+                    KeyCode::Up => app.scroll_logs_up(),
+                    KeyCode::Down => app.scroll_logs_down(),
+                    KeyCode::PageUp => app.scroll_logs_page_up(),
+                    KeyCode::PageDown => app.scroll_logs_page_down(),
+                    KeyCode::Home => app.scroll_logs_top(),
+                    KeyCode::End => app.scroll_logs_bottom(),
+                    KeyCode::Char('?') => app.show_help = true,
+                    _ => {}
                 }
             }
         }

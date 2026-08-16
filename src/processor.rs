@@ -3,14 +3,16 @@ use crate::config::Config;
 use crate::error::Error;
 use crate::number;
 use crate::scanner::{scan, VideoFile};
-use crate::tui::event::{AppEvent, FileStatus, Reporter, Stage};
+use crate::tui::event::{failure_reason, AppEvent, FileStatus, Reporter, Stage};
 use chrono::Utc;
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info, warn};
 
@@ -233,7 +235,11 @@ fn standard_filename(movie_number: &str, original_filename: &str) -> String {
     format!("{}-{}.{}", movie_number, suffix, ext)
 }
 
-pub async fn run(config: &Config, reporter: Arc<dyn Reporter>) -> anyhow::Result<()> {
+pub async fn run(
+    config: &Config,
+    reporter: Arc<dyn Reporter>,
+    quit_flag: &AtomicBool,
+) -> anyhow::Result<()> {
     let client = Arc::new(Client::new(
         config.server_url.clone(),
         config.token.clone(),
@@ -297,9 +303,11 @@ pub async fn run(config: &Config, reporter: Arc<dyn Reporter>) -> anyhow::Result
                 Ok(None) => FileStatus::Skipped,
                 Err(_) => FileStatus::Failed,
             };
+            let reason = result.as_ref().err().map(failure_reason);
             reporter.emit(AppEvent::FileDone {
                 filename: filename.clone(),
                 status,
+                reason,
             });
             (filename, result)
         }));
@@ -308,13 +316,45 @@ pub async fn run(config: &Config, reporter: Arc<dyn Reporter>) -> anyhow::Result
     let mut success = 0u32;
     let mut skipped = 0u32;
     let mut failed = 0u32;
+    let mut interrupted = false;
 
     let jav_download = &config.jav_download;
     let jav_failed = &config.jav_failed;
 
-    for (i, handle) in handles.into_iter().enumerate() {
-        let idx = i + 1;
-        let (filename, result) = handle.await?;
+    // 用户退出请求监视：置位后立即中断等待中的结果收集
+    let quit_watch = async {
+        loop {
+            if quit_flag.load(Ordering::SeqCst) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    };
+    tokio::pin!(quit_watch);
+
+    let mut next = 0usize;
+    while next < handles.len() {
+        let outcome = tokio::select! {
+            r = &mut handles[next] => Some(r),
+            _ = &mut quit_watch => None,
+        };
+        let Some(outcome) = outcome else {
+            interrupted = true;
+            break;
+        };
+        next += 1;
+        let idx = next;
+
+        // 任务 panic 不中断整轮：计为失败并继续收集
+        let (filename, result) = match outcome {
+            Ok(pair) => pair,
+            Err(join_err) => {
+                failed += 1;
+                error!("[{}/{}] ✗ 任务执行异常: {}", idx, total, join_err);
+                continue;
+            }
+        };
+
         match &result {
             Ok(Some(dest)) => {
                 if dry_run {
@@ -372,17 +412,36 @@ pub async fn run(config: &Config, reporter: Arc<dyn Reporter>) -> anyhow::Result
         }
     }
 
+    // 中断时终止尚未处理的任务（对已完成任务是 no-op）
+    if interrupted {
+        for handle in &handles {
+            handle.abort();
+        }
+        info!("收到退出请求，已中断处理（完成 {}/{}）", next, total);
+    }
+
     reporter.emit(AppEvent::RoundDone {
         success,
         skipped,
         failed,
+        interrupted,
     });
 
     info!("══════════════════════════════════════");
-    info!(
-        "  处理完成: {} 成功, {} 跳过, {} 失败",
-        success, skipped, failed
-    );
+    if interrupted {
+        info!(
+            "  已中断: {} 成功, {} 跳过, {} 失败（未完成 {}）",
+            success,
+            skipped,
+            failed,
+            total - next
+        );
+    } else {
+        info!(
+            "  处理完成: {} 成功, {} 跳过, {} 失败",
+            success, skipped, failed
+        );
+    }
     info!("══════════════════════════════════════");
 
     Ok(())

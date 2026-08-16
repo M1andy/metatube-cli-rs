@@ -34,10 +34,22 @@ async fn main() -> anyhow::Result<()> {
                 let quit_flag = Arc::new(AtomicBool::new(false));
                 let mode_label = config.mode.label();
                 let server_url = config.server_url.clone();
+                let dry_run = config.dry_run;
+                let concurrency = config.concurrency;
                 let flag = quit_flag.clone();
                 let join = std::thread::Builder::new()
                     .name("tui-renderer".into())
-                    .spawn(move || tui::render_loop(terminal, rx, flag, mode_label, server_url))?;
+                    .spawn(move || {
+                        tui::render_loop(
+                            terminal,
+                            rx,
+                            flag,
+                            mode_label,
+                            server_url,
+                            dry_run,
+                            concurrency,
+                        )
+                    })?;
                 (
                     Arc::new(ChannelReporter::new(tx)) as Arc<dyn Reporter>,
                     Some(join),
@@ -82,7 +94,7 @@ async fn main() -> anyhow::Result<()> {
     let result = match config.mode {
         RunMode::Once => {
             info!("→ 开始扫描视频文件...");
-            processor::run(&config, reporter.clone()).await
+            processor::run(&config, reporter.clone(), &quit_flag).await
         }
         RunMode::Cron => {
             match config
@@ -104,9 +116,16 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // TUI 收尾：终端恢复原状
-    if tui_join.is_some() {
+    let tui_active = tui_join.is_some();
+    if tui_active {
         if config.mode == RunMode::Once {
-            // once 模式：完成后保持界面（汇总 + 日志可滚动），等用户手动按 q/Esc 退出
+            // once 模式：完成后保持界面（汇总 + 日志可滚动），等用户手动按 q/Esc 退出；
+            // 启动失败时把错误送入界面，避免用户面对无提示的空白等待
+            if let Err(e) = &result {
+                reporter.emit(AppEvent::Fatal {
+                    message: format!("{:#}", e),
+                });
+            }
         } else {
             // cron/watch：业务循环已退出，通知渲染线程关闭
             reporter.emit(AppEvent::Shutdown);
@@ -114,6 +133,14 @@ async fn main() -> anyhow::Result<()> {
     }
     if let Some(join) = tui_join {
         let _ = join.join();
+    }
+
+    // TUI 模式下错误随 alt-screen 一起消失，恢复主屏后补打一次
+    // （纯文本回退模式错误已随日志输出，不再重复）
+    if tui_active {
+        if let Err(e) = &result {
+            eprintln!("✗ 运行失败: {:#}", e);
+        }
     }
 
     result

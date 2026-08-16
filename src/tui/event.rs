@@ -55,17 +55,25 @@ pub enum AppEvent {
     FileDone {
         filename: String,
         status: FileStatus,
+        /// 失败时的原因摘要（完整原因经 tracing 日志进入日志面板）。
+        reason: Option<String>,
     },
     RoundDone {
         success: u32,
         skipped: u32,
         failed: u32,
+        /// 用户中途退出导致的中断结束。
+        interrupted: bool,
     },
     NextSchedule {
         at: DateTime<Local>,
     },
     WatchReady {
         path: PathBuf,
+    },
+    /// 业务致命错误（如初始化失败）：UI 停留展示错误而非无提示等待。
+    Fatal {
+        message: String,
     },
     Log {
         level: Level,
@@ -77,6 +85,15 @@ pub enum AppEvent {
 /// 业务进度上报接口。
 pub trait Reporter: Send + Sync {
     fn emit(&self, event: AppEvent);
+}
+
+/// 失败原因摘要的最大字符数。
+const REASON_MAX_CHARS: usize = 120;
+
+/// 从错误链提取失败原因摘要（截断），供 `FileDone` 上报展示。
+pub fn failure_reason(e: &anyhow::Error) -> String {
+    let msg = format!("{:#}", e);
+    msg.chars().take(REASON_MAX_CHARS).collect()
 }
 
 /// 非 TUI 模式（纯文本日志）与测试使用的空实现。

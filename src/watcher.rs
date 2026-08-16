@@ -4,7 +4,7 @@ use crate::api::Client;
 use crate::config::Config;
 use crate::processor::process_one;
 use crate::scanner::{VideoFile, VIDEO_EXTENSIONS};
-use crate::tui::event::{AppEvent, FileStatus, Reporter};
+use crate::tui::event::{failure_reason, AppEvent, FileStatus, Reporter};
 use notify_debouncer_mini::{new_debouncer, DebouncedEvent};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -206,9 +206,11 @@ pub async fn run_watch(
                             Ok(None) => FileStatus::Skipped,
                             Err(_) => FileStatus::Failed,
                         };
+                        let reason = result.as_ref().err().map(failure_reason);
                         reporter.emit(AppEvent::FileDone {
                             filename: filename.clone(),
                             status,
+                            reason,
                         });
 
                         if let Err(e) = result {
